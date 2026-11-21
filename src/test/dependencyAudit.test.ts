@@ -96,3 +96,19 @@ test("reads title and fix from review markers and rejects bad replacements", () 
 test("changed file list drops traversal, lockfiles and build output", () => {
   assert.deepEqual(parseChangedFiles("src/a.ts\n../x.ts\n/etc/p.py\npackage-lock.json\nnode_modules/q/i.js\ndist/b.js\nREADME.md\nsrc/B.java"), ["src/a.ts", "src/B.java"]);
 });
+
+import {auditDependencies} from "../dependencyAudit";
+import {mkdtempSync, mkdirSync, writeFileSync} from "node:fs";
+import {join as joinPath} from "node:path";
+test("manifests in direct subfolders are detected and a bare package.json gets a lockfile hint", async () => {
+  const bare = mkdtempSync(joinPath(tmpdir(), "hush-deps-"));
+  writeFileSync(joinPath(bare, "package.json"), "{}");
+  const none = await auditDependencies(bare);
+  assert.equal(none.status, "unsupported");
+  assert.match(none.note, /package-lock-only/);
+  mkdirSync(joinPath(bare, "api"));
+  writeFileSync(joinPath(bare, "api", "requirements.txt"), "flask==0.12\n");
+  const nested = await auditDependencies(bare);
+  assert.equal(nested.manager, "pip");
+  assert.match(nested.note, /package-lock-only/);
+});

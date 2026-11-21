@@ -1,5 +1,5 @@
 import {join} from "node:path";
-import {access,readFile} from "node:fs/promises";
+import {access,readFile,readdir} from "node:fs/promises";
 import {homedir} from "node:os";
 import {exec} from "./exec";
 export interface DependencyVulnerability {id:string;pkg:string;installed:string;fixed?:string;severity:string;title:string;target:string;source?:"osv"}
@@ -27,10 +27,16 @@ async function exists(path:string):Promise<boolean>{try{await access(path);retur
 /** Offline-only scanner: Trivy must have a locally cached vulnerability database. */
 export async function auditDependencies(root:string,signal?:AbortSignal):Promise<DependencyAudit>{
  const supported:[string,string][]=[["pom.xml","maven"],["package-lock.json","npm"],["requirements.txt","pip"],["poetry.lock","poetry"],["Pipfile.lock","pipenv"],["build.gradle","gradle"],["build.gradle.kts","gradle"],["yarn.lock","yarn"],["pnpm-lock.yaml","pnpm"],["go.mod","go"],["Cargo.lock","cargo"],["composer.lock","composer"],["Gemfile.lock","bundler"],["packages.lock.json","nuget"]];
+ // Trivy scans recursively, so manifests in direct subfolders (api/, backend/) count too.
+ const dirs=[root];
+ try{for(const e of await readdir(root,{withFileTypes:true}))if(e.isDirectory()&&!/^\.|^(?:node_modules|vendor|target|build|dist|out)$/.test(e.name))dirs.push(join(root,e.name))}catch{/* unreadable root */}
  const names:string[]=[];
- for(const [file,name] of supported){if(!names.includes(name)&&await exists(join(root,file)))names.push(name)}
+ for(const [file,name] of supported)for(const dir of dirs){if(!names.includes(name)&&await exists(join(dir,file)))names.push(name)}
+ let npmWithoutLock=false;
+ if(!names.some(n=>["npm","yarn","pnpm"].includes(n)))for(const dir of dirs)if(await exists(join(dir,"package.json"))){npmWithoutLock=true;break}
  const manager=names.join(", ")||undefined;
- if(!manager)return {status:"unsupported",findings:0,note:"No supported dependency manifest found"};
+ const lockHint="package.json has no lockfile; run npm install --package-lock-only so npm packages can be checked";
+ if(!manager)return {status:"unsupported",findings:0,note:npmWithoutLock?lockHint:"No supported dependency manifest found"};
  try{
   const {stdout}=await exec("trivy",["fs","--offline-scan","--skip-db-update","--skip-java-db-update","--scanners","vuln","--format","json","--quiet","."],{
    cwd:root,timeout:120000,maxBuffer:8*1024*1024,windowsHide:true,signal,
@@ -42,7 +48,7 @@ export async function auditDependencies(root:string,signal?:AbortSignal):Promise
   let findings=0;
   for(const row of rows){const vulns=(row as {Vulnerabilities?:unknown[]})?.Vulnerabilities;if(Array.isArray(vulns))findings+=vulns.length}
   const vulnerabilities=parseTrivyVulnerabilities(parsed);
-  return {status:"ok",manager,findings,vulnerabilities,note:"Local Trivy database used; coverage depends on cached database freshness and supported ecosystems"};
+  return {status:"ok",manager,findings,vulnerabilities,note:"Local Trivy database used; coverage depends on cached database freshness and supported ecosystems"+(npmWithoutLock?". "+lockHint:"")};
  }catch(e){
   const err=e as NodeJS.ErrnoException;
   return {status:err.code==="ENOENT"?"missing":"failed",manager,findings:0,note:err.code==="ENOENT"?"Install Trivy and provision its vulnerability database locally first":"Offline scan failed; check local database availability and scanner setup"};
