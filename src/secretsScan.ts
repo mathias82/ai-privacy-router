@@ -26,6 +26,8 @@ function literalValue(raw: string): string | undefined {
 // Tests, fixtures, docs, examples and local/dev profiles usually hold throwaway values: still reported, but MEDIUM so real config stands out.
 const LOW_RISK_PATH = /(?:^|[\\/])(?:tests?|__tests__|spec|e2e|testdata|fixtures?|mocks?|examples?|samples?|docs?)[\\/]|\.(?:test|spec)\.\w+$|_test\.\w+$|\.(?:md|example|sample|template|dist)$|(?:^|[\\/.-])(?:local|dev|example|sample|template|demo)[\w-]*\.(?:env|ya?ml|json|properties|toml|ini)$/i;
 const TEST_CLASS = /[a-z0-9]Tests?\.(?:java|kt|cs|scala|groovy)$/;
+// Provider token formats are credentials whatever the variable is called (`stripeKey`, `token`, a comment...).
+const TOKEN = /\b(?:sk|rk)_live_[0-9A-Za-z]{24,}\b|\bAKIA[0-9A-Z]{16}\b|\bgh[pousr]_[0-9A-Za-z]{36,}\b|\bgithub_pat_[0-9A-Za-z_]{60,}\b|\bxox[abposr]-[0-9A-Za-z-]{20,}|\bAIza[0-9A-Za-z_-]{35}\b|-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/;
 function keyName(key: string): string { return key.split(/[.[\]]/).filter(Boolean).pop() ?? key; }
 export function scanSecrets(content: string, path = ""): SecretFinding[] {
   const code = CODE_FILE.test(path);
@@ -33,6 +35,11 @@ export function scanSecrets(content: string, path = ""): SecretFinding[] {
   const findings: SecretFinding[] = [];
   for (const [index, line] of content.split(/\r?\n/).entries()) {
     if (index >= 10000 || findings.length >= 100) break;
+    const token = TOKEN.exec(line);
+    if (token && !/EXAMPLE|X{8}|0{16}/i.test(token[0])) {
+      findings.push({line: index + 1, rule: "Potential hardcoded credential", severity});
+      continue;
+    }
     if (/^\s*(?:#|\/\/|\*)/.test(line)) continue;
     const decl = CODE_ASSIGNMENT.exec(line);
     if (decl && KEY.test(decl[1]) && !NOT_SECRET_KEY.test(decl[1]) && !PLACEHOLDER.test(decl[2] + decl[3] + decl[2]) && !/^\$\{|^\{\{|^<.*>$/.test(decl[3]) && !GLOB.test(decl[3]) && literalValue(decl[3]) !== undefined) {

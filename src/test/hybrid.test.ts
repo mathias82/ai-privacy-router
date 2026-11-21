@@ -428,3 +428,12 @@ test("insecure random is reported only near security use", () => {
   assert.deepEqual(scanSecurity("A.java", "double x = Math.random();"), []);
   assert.equal(scanSecurity("A.java", "String token = \"\" + new Random().nextInt();").length, 1);
 });
+
+test("provider token formats are found whatever the variable is called", async () => {
+  const { scanSecrets } = await import("../secretsScan");
+  // Built at runtime so the test file itself holds no token-shaped literal.
+  const stripe = "sk_" + "live_" + "51HxQe2LkW8vT3mN9pQrStUv";
+  assert.deepEqual(scanSecrets("module.exports = {\n  stripeKey: '" + stripe + "',\n};", "src/config.js").map(f => f.line), [2]);
+  assert.equal(scanSecrets("// aws " + "AKIA" + "IOSFODNN7EXAMPLE", "a.js").length, 0);
+  assert.equal(scanSecrets("const k = '" + "sk_" + "live_" + "x".repeat(24) + "';", "a.js").length, 0);
+});
