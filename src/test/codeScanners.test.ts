@@ -3,7 +3,7 @@ import {strict as assert} from "node:assert";
 import {mkdtemp, writeFile, rm, mkdir, chmod} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
-import {parseBandit, parseGosec, parseSpotBugs, sourceResolver, findClassDirs, runCodeScanner, parseOsv, mergeOsv, runOsvScanner, hasOsvDatabase} from "../codeScanners";
+import {parseBandit, parseGosec, parseSpotBugs, sourceResolver, findClassDirs, runCodeScanner, parseOsv, mergeOsv, runOsvScanner, hasOsvDatabase, osvDatabaseDirs} from "../codeScanners";
 import {DependencyVulnerability} from "../dependencyAudit";
 import {scanFolder} from "../cli";
 
@@ -131,6 +131,12 @@ test("OSV offline database is detected only when an ecosystem archive exists", a
     await writeFile(join(dir, "osv-scalibr", "npm", "all.zip"), "");
     assert.equal(await hasOsvDatabase([dir]), true);
   } finally { await rm(dir, {recursive: true, force: true}); }
+});
+
+test("OSV database lookup includes the osv-scalibr cache used by OSV-Scanner v2", () => {
+  const dirs = osvDatabaseDirs({}, "darwin", "/Users/dev");
+  assert.ok(dirs.includes(join("/Users/dev", "Library", "Caches", "osv-scalibr")));
+  assert.deepEqual(osvDatabaseDirs({OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY: "/db"}, "linux", "/home/dev"), ["/db"]);
 });
 
 test("CLI adds Bandit findings with a prefixed rule id, once per line next to built-in rules", {skip: process.platform === "win32"}, async () => {

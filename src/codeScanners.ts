@@ -270,7 +270,9 @@ export async function runOsvScanner(root: string, signal?: AbortSignal, large = 
 /** Folders OSV-Scanner reads its offline database from (OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY, else the user cache, else temp). */
 export function osvDatabaseDirs(env: NodeJS.ProcessEnv = process.env, platform = process.platform, home = homedir()): string[] {
   const cache = platform === "darwin" ? join(home, "Library", "Caches") : platform === "win32" ? env.LOCALAPPDATA : env.XDG_CACHE_HOME || join(home, ".cache");
-  return env.OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY ? [env.OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY] : [cache && join(cache, "osv-scanner"), join(tmpdir(), "osv-scanner")].filter((d): d is string => !!d);
+  if (env.OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY) return [env.OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY];
+  // OSV-Scanner v2 stores offline databases under "osv-scalibr"; v1 used "osv-scanner".
+  return [cache, tmpdir()].filter((d): d is string => !!d).flatMap(base => [join(base, "osv-scalibr"), join(base, "osv-scanner")]);
 }
 /** Whether any ecosystem database (…/<ecosystem>/all.zip) was downloaded. */
 export async function hasOsvDatabase(dirs = osvDatabaseDirs()): Promise<boolean> {
