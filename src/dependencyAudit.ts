@@ -51,7 +51,7 @@ export async function auditDependencies(root:string,signal?:AbortSignal):Promise
   return {status:"ok",manager,findings,vulnerabilities,note:"Local Trivy database used; coverage depends on cached database freshness and supported ecosystems"+(npmWithoutLock?". "+lockHint:"")};
  }catch(e){
   const err=e as NodeJS.ErrnoException;
-  return {status:err.code==="ENOENT"?"missing":"failed",manager,findings:0,note:err.code==="ENOENT"?"Install Trivy and provision its vulnerability database locally first":"Offline scan failed; check local database availability and scanner setup"};
+  return {status:err.code==="ENOENT"?"missing":"failed",manager,findings:0,note:(err.code==="ENOENT"?"Install Trivy and provision its vulnerability database locally first":"Offline scan failed; check local database availability and scanner setup")+(npmWithoutLock?". "+lockHint:"")};
  }
 }
 
