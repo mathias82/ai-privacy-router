@@ -47,7 +47,7 @@ try {
   activate = require("../extension").activate;
 } finally { Module._load = originalLoad; }
 
-async function chat(files: Record<string, string>, responses: string[], prompt = "check code for bugs", unknown = false, commandOverride?: string) {
+async function chat(files: Record<string, string>, responses: string[], prompt = "check code for bugs", unknown: boolean | object[] = false, commandOverride?: string) {
   docs = new Map(Object.entries(files));
   const requests: {url: string; payload?: any}[] = [];
   const output: string[] = [];
@@ -66,7 +66,7 @@ async function chat(files: Record<string, string>, responses: string[], prompt =
   try {
     activate({subscriptions: [], asAbsolutePath: (p: string) => p, globalStorageUri: {fsPath: "/unused"}, globalState: {get: () => true, update: async () => undefined}} as unknown as vscode.ExtensionContext);
     await handler({command: commandOverride ?? (prompt === "Explain" ? undefined : "review"), prompt,
-      references: unknown ? [{value: "unreadable"}] : Object.keys(files).map(path => ({value: new Uri(path)}))}, {},
+      references: Array.isArray(unknown) ? unknown : unknown ? [{value: "unreadable"}] : Object.keys(files).map(path => ({value: new Uri(path)}))}, {},
     {markdown: (text: string) => output.push(text), progress: () => undefined, button: (b: {title: string}) => output.push("[button] " + b.title)}, {isCancellationRequested: false, onCancellationRequested: () => disposable});
     return {requests, output: output.join('\n')};
   } finally {globalThis.fetch = priorFetch;}
@@ -106,6 +106,12 @@ test("auto defaults to local without Copilot discovery or implicit file context"
   assert.equal(result.requests.length, 3);
   assert.equal(result.requests[2].payload.prompt, "Design a Java queue");
   assert.match(result.output, /Route:\*\* ollama/);
+});
+test("auto ignores the skill index VS Code attaches and still routes the typed prompt", async () => {
+  const result = await chat({}, ["local routed answer"], "Design a Java queue",
+    [{id: "vscode.customizations.index", value: "<skills>...</skills>"}], "auto");
+  assert.doesNotMatch(result.output, /cannot be inspected|Attached context stays local/);
+  assert.equal(result.requests[2].payload.prompt, "Design a Java queue");
 });
 test("auto attachments stay on the local review path", async () => {
   const before = copilotLookups;

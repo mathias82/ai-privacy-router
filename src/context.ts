@@ -27,6 +27,6 @@ export function sourcePrompt(input: ReviewInput): string {
 
 /** Chat adds instruction/prompt files (copilot-instructions.md, AGENTS.md, .ai-context) as references; they are guidance, not the code to review. */
 export function isInstructionReference(id: string | undefined, path: string): boolean {
-  return /^vscode\.prompt\./.test(id ?? "") ||
+  return /^vscode\.(?:prompt|customizations)\./.test(id ?? "") ||
     /(?:^|\/)(?:copilot-instructions\.md|AGENTS\.md|CLAUDE\.md|GEMINI\.md|[^/]+\.(?:instructions|prompt|chatmode|agent)\.md)$|\/\.ai-context\/|\/\.github\/(?:instructions|prompts|chatmodes|agents)\//i.test(path);
 }

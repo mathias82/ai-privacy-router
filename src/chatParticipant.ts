@@ -102,7 +102,9 @@ export function registerChatParticipant(context: vscode.ExtensionContext, review
   // Always register our declared Chat Participant when the VS Code Chat API exists.
   // A user Chat setting must not silently leave the declared participant unregistered.
   const participant = vscode.chat.createChatParticipant("ai-privacy-router.privacy", async (request, chatContext, stream, token) => {
-    if (request.command === "auto" && request.references.length === 0) {
+    // VS Code adds its own instruction/skill indexes as references; they are not user context.
+    const userReferences = request.references.filter(ref => !isInstructionReference(ref.id, ""));
+    if (request.command === "auto" && userReferences.length === 0) {
       try {
         const result = await autoPrompt(request.prompt, token);
         if (!token.isCancellationRequested) stream.markdown(formatRouted(result));
@@ -219,7 +221,7 @@ export function registerChatParticipant(context: vscode.ExtensionContext, review
       }
       stream.markdown("Reviewing " + attachments.length + " changed file(s) locally: " + attachments.map(a => "`" + vscode.workspace.asRelativePath(vscode.Uri.parse(a.path)) + "`").join(", ") + "\n\n");
     }
-    for (const ref of request.references) {
+    for (const ref of userReferences) {
       const value = ref.value;
       // VS Code Chat can supply a Location, URI, or a revived { uri, range }
       // file reference. Do not assume all context values are class instances.
