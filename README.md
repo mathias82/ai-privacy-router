@@ -1,14 +1,16 @@
 # Hushavyr — Private AI Code Review & Security Scanner for VS Code
 
-[![VS Marketplace](https://img.shields.io/visual-studio-marketplace/v/mathias82.hushavyr?label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=mathias82.hushavyr)
-[![Installs](https://img.shields.io/visual-studio-marketplace/i/mathias82.hushavyr)](https://marketplace.visualstudio.com/items?itemName=mathias82.hushavyr)
-[![Rating](https://img.shields.io/visual-studio-marketplace/r/mathias82.hushavyr)](https://marketplace.visualstudio.com/items?itemName=mathias82.hushavyr&ssr=false#review-details)
+[![VS Marketplace](https://vsmarketplacebadges.dev/version-short/mathias82.hushavyr.svg)](https://marketplace.visualstudio.com/items?itemName=mathias82.hushavyr)
+[![Installs](https://vsmarketplacebadges.dev/installs-short/mathias82.hushavyr.svg)](https://marketplace.visualstudio.com/items?itemName=mathias82.hushavyr)
+[![Rating](https://vsmarketplacebadges.dev/rating-star/mathias82.hushavyr.svg)](https://marketplace.visualstudio.com/items?itemName=mathias82.hushavyr&ssr=false#review-details)
 [![CI](https://github.com/mathias82/Hushavyr/actions/workflows/ci.yml/badge.svg)](https://github.com/mathias82/Hushavyr/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Hushavyr is a **free, local AI code reviewer** and **security scanner** for VS Code. It runs **on your machine** with Ollama. It finds bugs, security vulnerabilities (OWASP Top 10, SQL injection, XSS, command injection), hardcoded secrets and vulnerable dependencies (CVEs). It can prove a fix with a failing test and open the pull request. Your code never goes to a cloud model.
 
 **Works with:** Java, Kotlin, Python, JavaScript, TypeScript, Go, Rust, C#, PHP and Ruby.
+
+![Hushavyr demo: install, setup and every chat command running locally](https://raw.githubusercontent.com/mathias82/Hushavyr/main/docs/media/hushavyr-demo.gif)
 
 ## Why Hushavyr?
 

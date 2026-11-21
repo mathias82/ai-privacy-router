@@ -29,3 +29,6 @@ e2e/**
 
 # Build helper (dist/vendor holds its output)
 **/scripts/vendor-tree-sitter.cjs
+
+# README demo media (linked by absolute URL)
+docs/media/**
