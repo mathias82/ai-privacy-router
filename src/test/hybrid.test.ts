@@ -372,7 +372,7 @@ test("/improve asks for real improvements and keeps a safe change summary", asyn
   const { improveInstruction, parseSummary, isEditRequest } = await import("../codeEdit");
   assert.match(improveInstruction(), /real bugs/);
   assert.match(improveInstruction("performance"), /Focus on: performance$/);
-  assert.deepEqual(parseSummary(JSON.stringify({content: "x", summary: ["Close the stream in finally", " ", "Use `textContent` <b>"]})), ["Close the stream in finally", "Use textContent b"]);
+  assert.deepEqual(parseSummary(JSON.stringify({content: "x", summary: ["Close the stream in finally", " ", "Use `textContent` <b>"]})), ["Close the stream in finally", "Use textContent <b>"]);
   assert.deepEqual(parseSummary("not json"), []);
   assert.ok(isEditRequest("βελτίωσέ το"));
   assert.ok(isEditRequest("improve error handling"));

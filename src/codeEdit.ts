@@ -14,7 +14,7 @@ export function improveInstruction(focus = ""): string {
 export function parseSummary(raw: string): string[] {
   try {
     const value = (JSON.parse(raw) as {summary?: unknown}).summary;
-    return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string" && !!v.trim()).slice(0, 8).map(v => v.trim().replace(/[`\[\]<>]/g, "").slice(0, 160)) : [];
+    return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string" && !!v.trim()).slice(0, 8).map(v => v.trim().replace(/[`\[\]]/g, "").slice(0, 160)) : [];
   } catch { return []; }
 }
 
