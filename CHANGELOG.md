@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0
+First stable release. The public surface (chat commands, command ids, settings, CLI flags and exit codes, SARIF output) is now covered by the [stability policy](docs/stability.md).
+- **OWASP Benchmark for Java: 97.2% with 0% false positives.** Every category scores 100% except weak hashing (69%), where the algorithm is read from a properties file outside the scanned code.
+- **Tree-sitter Java analysis:** methods, parameters and annotations come from a real syntax tree, and calls resolve by the receiver's declared type, so a project method named `execute` or `query` is no longer mistaken for a database call. Falls back to the line-based engine when a file does not parse.
+- **Fewer false alarms on real code:** method declarations are not sinks, locals of one method no longer taint another, `System.out` is not a web response, static helper calls are not JDBC, ambiguous names and other languages are not followed, and `Math.random()` is reported only near tokens, passwords, cookies or keys.
+- **Light mode for 8 GB machines:** `aiPrivacyRouter.reviewDepth` defaults to `auto`: thorough from 20 GB, fast from 12 GB and a new `light` mode below. Light mode uses `qwen2.5-coder:3b`, one short pass and an 8k context, while the built-in rules and the verifier carry the rest. The CLI accepts `hushavyr-review --light`.
+
 ## 0.0.32
 - **More optional offline analyzers:** FindSecBugs (SpotBugs, compiled Java/Kotlin classes), Bandit (Python), gosec (Go) and OSV-Scanner (dependency CVEs, offline database only) feed `/security`, `/scan`, `/dependencies`, the CLI and SARIF with `findsecbugs-`, `bandit-`, `gosec-` and `osv-` rule ids. Only medium/high findings outside tests are kept, each line is reported once, and OSV CVEs already found by Trivy are not repeated. Missing tools are skipped; Setup offers them for matching projects and asks before downloading the OSV database.
 - **Go verified fixes:** choose **Go / go test** to reproduce a bug with a generated failing Go test and verify the fix in offline Docker:

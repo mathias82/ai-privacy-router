@@ -51,12 +51,13 @@ Output is SARIF 2.1.0, so GitHub code scanning and any other SARIF viewer can re
 
 ## Models and memory
 
-Setup picks the model for your machine; you can change it in the `aiPrivacyRouter.ollamaModel` setting.
+Setup picks the model for your machine; you can change it in the `aiPrivacyRouter.ollamaModel` setting. `aiPrivacyRouter.reviewDepth` (default `auto`) picks how many review passes run for the same memory sizes.
 
 | Memory | Default model | Notes |
 | --- | --- | --- |
-| under 20 GB | `qwen2.5-coder:7b` | Fast; finds the obvious issues. Use `reviewDepth: fast` on 8 GB machines. |
-| 20–30 GB | `qwen2.5-coder:14b` | Better reviews, slower. |
+| under 12 GB | `qwen2.5-coder:3b` | Light mode: one short pass with an 8k context; the built-in rules and the verifier do most of the work. Runs on 8 GB laptops. |
+| 12–20 GB | `qwen2.5-coder:7b` | Fast; one pass. |
+| 20–30 GB | `qwen2.5-coder:14b` | Thorough: general, security and robustness passes. |
 | 30 GB or more | `qwen3-coder:30b` | Best reviews. A mixture-of-experts model (about 3B active parameters), so it is faster than the 14b. |
 
 **Hushavyr: Start Ollama** turns on flash attention and an 8-bit KV cache, which roughly halves context memory. The deterministic commands (`/security`, `/secrets`, `/dependencies`) need no model at all, `/review` results are cached, and `/scan-changed` skips files that did not change.
@@ -127,7 +128,7 @@ Setup picks one for your RAM: `qwen2.5-coder:7b` under 20 GB, `14b` for 20–30 
 Yes. `/security`, `/secrets` and `/dependencies` are deterministic and need no model. The `hushavyr-scan` CLI runs the same checks in CI and writes SARIF for GitHub code scanning.
 
 **How accurate is it?**
-On our synthetic benchmark the built-in rules find every planted issue with no false alarms. On the external [OWASP Benchmark for Java](docs/owasp-benchmark.md) we publish the full score per category. Findings are potential issues; check them before acting.
+On our synthetic benchmark the built-in rules find every planted issue with no false alarms. On the external [OWASP Benchmark for Java](docs/owasp-benchmark.md) the scanner scores **97.2% with 0% false positives** (every category 100% except weak hashing, 69%). Real projects are messier than any benchmark, so no tool is perfect. Findings are potential issues; check them before acting.
 
 **Does it work in Cursor, VSCodium or Windsurf?**
 The `@ai-privacy` chat commands need the VS Code Chat API (VS Code 1.90 or later), which other editors may not support. The Command Palette commands and the `hushavyr-scan` CLI work everywhere.

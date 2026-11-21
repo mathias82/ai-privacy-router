@@ -4,7 +4,7 @@
   "author": "Matthaios Stavrou",
   "publisher": "mathias82",
   "description": "Free, private AI code review and security scanner for VS Code. Runs locally with Ollama: finds bugs, vulnerabilities (OWASP, SAST), leaked secrets and dependency CVEs, proves fixes with tests and opens PRs. Your code never leaves your machine.",
-  "version": "0.0.32",
+  "version": "1.0.0",
   "private": true,
   "engines": {
     "vscode": "^1.90.0"
