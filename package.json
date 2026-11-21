@@ -283,6 +283,12 @@
           "type": "boolean",
           "default": false,
           "description": "Allow /escalate to send a selected, pseudonymized function to a Copilot model after you preview and approve the exact payload. Off by default; secrets, PII, sensitive and ignored files are always blocked."
+        },
+        "aiPrivacyRouter.findSecBugsPlugin": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "description": "Path to findsecbugs-plugin.jar used with SpotBugs. Empty uses ~/.hushavyr/findsecbugs-plugin.jar. The CLI reads HUSHAVYR_FINDSECBUGS_PLUGIN."
         }
       }
     },
@@ -359,7 +365,7 @@
     ]
   },
   "scripts": {
-    "build": "tsc -p .",
+    "build": "tsc -p . && node scripts/vendor-tree-sitter.cjs",
     "test": "npm run build && node --test dist/test/*.test.js",
     "test:e2e": "npm run build && tsc -p e2e && node dist/e2e/runTest.js",
     "package:vsix": "npm run build && vsce package --no-dependencies",
@@ -435,5 +441,9 @@
   "homepage": "https://github.com/mathias82/Hushavyr#readme",
   "bugs": {
     "url": "https://github.com/mathias82/Hushavyr/issues"
+  },
+  "dependencies": {
+    "tree-sitter-java": "0.23.5",
+    "web-tree-sitter": "0.27.2"
   }
 }

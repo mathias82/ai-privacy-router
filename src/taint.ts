@@ -1,4 +1,9 @@
 import {definedNames, definitionSnippet} from "./callContext";
+import {initJavaParser, JavaFile, JavaProject, parseJava} from "./javaAst";
+
+export {initJavaParser};
+// Loading starts at import, so a scan that reads files first finds the parser ready; await initJavaParser() to be sure.
+void initJavaParser();
 
 /**
  * Project-wide (interprocedural, cross-file) taint tracking without a model or Semgrep Pro.
@@ -6,7 +11,10 @@ import {definedNames, definitionSnippet} from "./callContext";
  * propagated through calls to a fixpoint, then request input (req.query, @RequestParam, getParameter...) is followed into them.
  * Statements are tracked with their block context, so constant conditions, constant switch selectors and constant
  * collection slots do not carry taint, and assignments inside conditional branches only add taint.
- * Heuristic and line-based: it reports a path to verify, not a proof.
+ * Heuristic and line-based: it reports a path to verify, not a proof. Java files are parsed with tree-sitter when the parser
+ * is loaded (initJavaParser): methods, parameters and annotations come from the syntax tree, comments are ignored, and a
+ * call on a receiver of a declared type resolves only to that type's methods (and only reaches a SQL, command, LDAP, XPath
+ * or session sink on a matching API type).
  */
 export type SinkKind = "sql" | "command" | "code" | "path" | "ssrf" | "xss" | "ldap" | "xpath" | "trust-boundary";
 export interface TaintFile { path: string; text: string }
@@ -42,6 +50,14 @@ const ASSIGN = /^\s*((?:(?:const|let|var|final|val|auto|static)\s+)*(?:[\w$.]+(?
 const MUTATOR = /^(?:add|addAll|addElement|addFirst|addLast|append|insert|offer|push|put|putAll|putIfAbsent|set|setProperty|remove|clear|merge|compute\w*)$/;
 const CONTAINER = /^new\s+[\w$.]*(?:List|Map|Set|Vector|Stack|Queue|Deque)\s*(?:<[^()]*>)?\s*\(\s*\)$/;
 const MAX_FILES = 3000;
+/** API types whose methods are the sinks; a typed receiver of any other type (a project class, an executor, an HTTP client) is not the sink. */
+const RECEIVER: Partial<Record<SinkKind, RegExp>> = {
+  sql: /^(?:Statement|PreparedStatement|CallableStatement|Connection|\w*Jdbc\w*|EntityManager|\w*Session|Query|TypedQuery|NativeQuery|SQLiteDatabase|DSLContext|Handle|DatabaseClient)$/,
+  command: /^(?:Runtime|ProcessBuilder)$/,
+  ldap: /^(?:\w*DirContext|\w*LdapContext|LdapTemplate|LdapOperations)$/,
+  xpath: /^(?:XPath|XPathExpression)$/,
+  "trust-boundary": /^\w*Session$/
+};
 /** A method or constructor head (Java, C#, Kotlin, JS/TS functions); calls end with ";" and control statements are excluded. */
 const DECL = /^\s*(?:@[\w.]+(?:\([^)]*\))?\s+)*(?:(?:public|private|protected|static|final|abstract|synchronized|native|default|override|async|internal|open|suspend)\s+)*(?:fun\s+|function\s*\*?\s*|func\s+|(?!(?:return|new|else|throw|await|yield|case|typeof|delete|if|for|while|switch|catch)\b)[\w$.]+(?:<[^()]*>)?(?:\[\s*\])*\s+)(?!(?:if|for|while|switch|catch|synchronized)\b)[A-Za-z_$][\w$]*\s*\([^;]*\)\s*(?:throws\s+[\w$.,\s]+?)?(?::\s*[\w$.<>[\]?, ]+)?\s*\{/;
 
@@ -79,8 +95,8 @@ function splitArgs(text: string, open: number): string[] {
 const depth = (text: string) => (text.match(/[([]/g)?.length ?? 0) - (text.match(/[)\]]/g)?.length ?? 0);
 
 /** Statements: physical lines joined while brackets are open or an operator continues them, then split at top-level ";". */
-function statements(lines: readonly string[], lits: string[]): {text: string; index: number}[] {
-  const out: {text: string; index: number}[] = [];
+function statements(lines: readonly string[], lits: string[]): {text: string; index: number; end: number}[] {
+  const out: {text: string; index: number; end: number}[] = [];
   for (let i = 0; i < lines.length; i++) {
     const index = i;
     let text = code(lines[i], lits);
@@ -90,9 +106,9 @@ function statements(lines: readonly string[], lits: string[]): {text: string; in
     for (let k = 0; k < text.length; k++) {
       if ("([".includes(text[k])) level++;
       else if (")]".includes(text[k])) level--;
-      else if (text[k] === ";" && level <= 0) { out.push({text: text.slice(start, k), index}); start = k + 1; }
+      else if (text[k] === ";" && level <= 0) { out.push({text: text.slice(start, k), index, end: i}); start = k + 1; }
     }
-    if (text.slice(start).trim() || start === 0) out.push({text: text.slice(start), index});
+    if (text.slice(start).trim() || start === 0) out.push({text: text.slice(start), index, end: i});
   }
   return out;
 }
@@ -148,22 +164,45 @@ function params(snippet: string, path: string): Param[] {
 
 interface Reach { kind: SinkKind; path: string; line: number; via: string[] }
 /** returns: parameters whose taint is returned; markup: the subset still returned without HTML encoding. */
-interface Summary { path: string; sinks: Map<number, Reach>; returns: Set<number>; markup: Set<number>; source: boolean }
+interface Summary { path: string; sinks: Map<number, Reach>; returns: Set<number>; markup: Set<number>; source: boolean; cls?: string; arity?: number; varargs?: boolean }
+type Site = ReturnType<JavaProject["resolve"]>;
 type Summaries = Map<string, Summary[]>;
 const FAMILY: [RegExp, string][] = [[/\.(?:java|kt|scala|groovy)$/i, "jvm"], [/\.(?:[cm]?js|jsx|tsx?)$/i, "js"], [/\.py$/i, "py"], [/\.cs$/i, "cs"], [/\.php$/i, "php"], [/\.go$/i, "go"], [/\.rb$/i, "rb"], [/\.rs$/i, "rs"]];
 const family = (path: string) => FAMILY.find(([re]) => re.test(path))?.[1] ?? path;
 /** Summaries for a called name; a definition in the calling file shadows same-named ones elsewhere.
  * Without types a call is matched by name only, so other languages never match, and a name defined
- * in more than two other files (execute, run, handle) is too ambiguous to follow. */
-function lookup(summaries: Summaries, name: string, path: string): Summary[] {
-  const all = summaries.get(name) ?? [];
+ * in more than two other files (execute, run, handle) is too ambiguous to follow. A parsed Java call site narrows the
+ * candidates to overloads taking its argument count and, when its receiver type is known, to that type's hierarchy. */
+function lookup(summaries: Summaries, name: string, path: string, site?: Site, project?: JavaProject): Summary[] {
+  let all = summaries.get(name) ?? [];
+  if (site) {
+    all = all.filter(s => s.arity === undefined || [...site.argc].some(n => n === s.arity || (s.varargs && n >= s.arity! - 1)));
+    const classes = site.types && project?.related(site.types);
+    if (classes) all = all.filter(s => s.cls === undefined || classes.has(s.cls));
+  }
   const own = all.filter(s => s.path === path);
   if (own.length) return own;
   const lang = family(path), same = all.filter(s => family(s.path) === lang);
   return new Set(same.map(s => s.path)).size > 2 ? [] : same;
 }
 
-interface Fn { name: string; path: string; startLine: number; lines: string[]; params: Param[]; route: boolean; summary: Summary }
+interface Fn { name: string; path: string; startLine: number; lines: string[]; params: Param[]; route: boolean; summary: Summary; skipHead: boolean }
+/** Parsed Java methods: only the body is analysed (the head is blanked), so a method named like a sink is not its own sink. */
+function javaFunctions(path: string, java: JavaFile): Fn[] {
+  const all = java.text.split(/\r?\n/);
+  return java.methods.map(m => {
+    const [openLine, openColumn, closeLine, closeColumn] = m.body;
+    const lines = all.slice(m.startLine - 1, m.endLine).map((line, k) => {
+      const row = m.startLine - 1 + k;
+      if (row === closeLine) line = line.slice(0, closeColumn + 1);
+      return row < openLine ? "" : row === openLine ? " ".repeat(openColumn) + line.slice(openColumn) : line;
+    });
+    return {m, lines};
+  }).map(({m, lines}) => ({name: m.name, path, startLine: m.startLine, lines, params: m.params, skipHead: false,
+    route: all.slice(Math.max(0, m.startLine - 4), m.startLine - 1).some(l => ROUTE.test(l)),
+    summary: {path, sinks: new Map(), returns: new Set(), markup: new Set(), source: false, cls: m.cls, arity: m.params.length, varargs: m.varargs}}));
+}
+
 function functions(file: TaintFile): Fn[] {
   const all = file.text.split(/\r?\n/);
   const fns: Fn[] = [];
@@ -174,7 +213,7 @@ function functions(file: TaintFile): Fn[] {
     // Multi-line calls ("new String(", "x = foo(") look like declarations; a definition has a body.
     if (new RegExp("(?:\\bnew\\s+|[=.]\\s*)" + name + "\\s*\\(").test(head) || (BRACES.test(file.path) && !/\{/.test(snippet.text.split(";")[0]))) continue;
     const above = all.slice(Math.max(0, snippet.startLine - 4), snippet.startLine - 1);
-    fns.push({name, path: file.path, startLine: snippet.startLine, lines: snippet.text.split("\n"), params: params(snippet.text, file.path),
+    fns.push({name, path: file.path, startLine: snippet.startLine, skipHead: true, lines: snippet.text.split("\n"), params: params(snippet.text, file.path),
       route: above.some(l => ROUTE.test(l)), summary: {path: file.path, sinks: new Map(), returns: new Set(), markup: new Set(), source: false}});
   }
   return fns;
@@ -185,11 +224,13 @@ interface Ctx { kind: "plain" | "cond" | "dead" | "switch"; value?: Value; live?
 interface Slots { list?: (number | undefined)[]; keys: Map<string, number | undefined>; depth: number }
 
 /** Follows tainted variables through one body; returns every sink reached (directly or through summarised calls) and whether taint is returned. */
-function analyse(lines: readonly string[], firstLine: number, path: string, initial: ReadonlyMap<string, number>, summaries: Summaries, skipFirst: boolean): {hits: Hit[]; returned?: number; markup?: number} {
+function analyse(lines: readonly string[], firstLine: number, path: string, initial: ReadonlyMap<string, number>, summaries: Summaries, skipFirst: boolean, project?: JavaProject): {hits: Hit[]; returned?: number; markup?: number} {
   const tainted = new Map(initial), htmlSafe = new Set<string>(), writers = new Set<string>(), consts = new Map<string, Value>(), slots = new Map<string, Slots>();
   const lits: string[] = [], hits: Hit[] = [], stack: Ctx[] = [], ifs = new Map<number, boolean | undefined>();
   const body = lines.join("\n"), braces = BRACES.test(path);
-  let returned: number | undefined, markup: number | undefined, pending: Ctx | undefined;
+  let returned: number | undefined, markup: number | undefined, pending: Ctx | undefined, span = [0, 0];
+  /** Syntax-tree view of the calls of name in the current statement (Java only). */
+  const site = (name: string): Site => project?.resolve(path, name, span[0], span[1]);
   const live = () => stack.every(c => c.kind !== "dead" && (c.kind !== "switch" || c.live));
   /** Whether an update may not happen: a conditional block was entered since the variable's block (from). */
   const weak = (from = 0) => stack.slice(from).some(c => c.kind === "cond" || (c.kind === "switch" && c.value === undefined));
@@ -234,7 +275,7 @@ function analyse(lines: readonly string[], firstLine: number, path: string, init
         .find(m => summaries.has(m[1]) && !/^(?:new|if|for|while|switch|return|catch)$/.test(m[1]));
       if (!call) break;
       const open = call.index! + call[0].length - 1, args = splitArgs(expr, open);
-      for (const s of lookup(summaries, call[1], path)) {
+      for (const s of lookup(summaries, call[1], path, site(call[1]), project)) {
         if (s.source) found ??= line;
         for (const i of xss ? s.markup : s.returns) if (args[i] !== undefined) found ??= origin(args[i], line, kind);
       }
@@ -272,6 +313,8 @@ function analyse(lines: readonly string[], firstLine: number, path: string, init
       for (const m of text.matchAll(sink.call)) {
         // Database handles are objects (stmt.execute, cursor.execute); Helper.execute(...) is a static call into application code.
         if (sink.kind === "sql" && /(?<![\w$.])[A-Z][\w$]*\.$/.test(text.slice(0, m.index! + 1))) continue;
+        const method = /(?<!\bnew\s+)\b([A-Za-z_$][\w$]*)\s*\($/.exec(m[0])?.[1], types = method && RECEIVER[sink.kind] ? site(method)?.types : undefined;
+        if (types && project && ![...types].some(t => [...project.ancestors(t)].some(a => RECEIVER[sink.kind]!.test(a)))) continue;
         const end = m.index! + m[0].length, args = m[0].endsWith("(") ? splitArgs(text, end - 1) : [text.slice(end)];
         const from = origin(sink.all ? args.join(",") : args[0] ?? "", line, sink.kind);
         if (from !== undefined) hits.push({kind: sink.kind, path, line, via: [], origin: from});
@@ -282,7 +325,7 @@ function analyse(lines: readonly string[], firstLine: number, path: string, init
     for (const m of text.matchAll(/([A-Za-z_$][\w$]*)\s*\(/g)) {
       if (/\b(?:function|def|fun|func)\s+$/.test(text.slice(0, m.index))) continue;
       const args = splitArgs(text, m.index! + m[0].length - 1);
-      for (const s of lookup(summaries, m[1], path)) for (const [i, reach] of s.sinks) {
+      for (const s of lookup(summaries, m[1], path, site(m[1]), project)) for (const [i, reach] of s.sinks) {
         const from = args[i] === undefined ? undefined : origin(args[i], line, reach.kind);
         if (from !== undefined) hits.push({...reach, via: [m[1], ...reach.via], origin: from});
       }
@@ -371,22 +414,31 @@ function analyse(lines: readonly string[], firstLine: number, path: string, init
       for (const ch of text) if (ch === "{") { stack.push({kind: "plain"}); level++; } else if (ch === "}" && level-- > 0) stack.pop(); else if (ch === "}") stack.pop();
     }
   };
-  for (const s of statements(lines, lits)) step(s.text, firstLine + s.index, skipFirst && s.index === 0);
+  for (const s of statements(lines, lits)) { span = [firstLine + s.index, firstLine + s.end]; step(s.text, firstLine + s.index, skipFirst && s.index === 0); }
   return {hits, returned, markup};
 }
 
 export function taintFlows(files: readonly TaintFile[]): TaintFlow[] {
-  const fns = files.slice(0, MAX_FILES).filter(f => f.text.length <= 200_000).flatMap(functions);
+  const sources = files.slice(0, MAX_FILES).filter(f => f.text.length <= 200_000);
+  const trees = new Map<string, JavaFile>();
+  for (const f of sources) {
+    const tree = /\.java$/i.test(f.path) ? parseJava(f.text) : undefined;
+    if (tree) trees.set(f.path, tree);
+  }
+  const project = trees.size ? new JavaProject(trees) : undefined;
+  // Parsed Java files are analysed with comments blanked out, so commented-out code is neither a source nor a sink.
+  const text = (f: TaintFile) => trees.get(f.path)?.text ?? f.text;
+  const fns = sources.flatMap(f => trees.has(f.path) ? javaFunctions(f.path, trees.get(f.path)!) : functions(f));
   const summaries: Summaries = new Map();
   for (const fn of fns) summaries.set(fn.name, [...(summaries.get(fn.name) ?? []), fn.summary]);
   for (let round = 0; round < 6; round++) {
     let changed = false;
     for (const fn of fns) {
       const s = fn.summary;
-      if (!s.source && analyse(fn.lines, fn.startLine, fn.path, new Map(), summaries, true).returned !== undefined) changed = s.source = true;
+      if (!s.source && analyse(fn.lines, fn.startLine, fn.path, new Map(), summaries, fn.skipHead, project).returned !== undefined) changed = s.source = true;
       fn.params.forEach((p, i) => {
         if (!p.name || (s.sinks.has(i) && s.markup.has(i))) return;
-        const result = analyse(fn.lines, fn.startLine, fn.path, new Map([[p.name, fn.startLine]]), summaries, true);
+        const result = analyse(fn.lines, fn.startLine, fn.path, new Map([[p.name, fn.startLine]]), summaries, fn.skipHead, project);
         const hit = result.hits.find(h => !h.via.includes(fn.name));
         if (hit && !s.sinks.has(i)) { s.sinks.set(i, {kind: hit.kind, path: hit.path, line: hit.line, via: hit.via}); changed = true; }
         if (result.returned !== undefined && !s.returns.has(i)) { s.returns.add(i); changed = true; }
@@ -406,9 +458,9 @@ export function taintFlows(files: readonly TaintFile[]): TaintFlow[] {
   };
   for (const fn of fns) {
     const entry = fn.params.filter(p => p.name && (p.annotated || fn.route));
-    if (entry.length) add(fn.path, analyse(fn.lines, fn.startLine, fn.path, new Map(entry.map(p => [p.name, fn.startLine])), summaries, true).hits);
+    if (entry.length) add(fn.path, analyse(fn.lines, fn.startLine, fn.path, new Map(entry.map(p => [p.name, fn.startLine])), summaries, fn.skipHead, project).hits);
   }
-  for (const file of files.slice(0, MAX_FILES)) if (SOURCE.test(file.text) && file.text.length <= 200_000) add(file.path, analyse(file.text.split(/\r?\n/), 1, file.path, new Map(), summaries, false).hits);
+  for (const file of sources) if (SOURCE.test(text(file))) add(file.path, analyse(text(file).split(/\r?\n/), 1, file.path, new Map(), summaries, false, project).hits);
   return [...flows.values()].sort((a, b) => a.sink.path.localeCompare(b.sink.path) || a.sink.line - b.sink.line);
 }
 

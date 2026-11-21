@@ -3,12 +3,13 @@ import {readdir, readFile, stat, writeFile} from "node:fs/promises";
 import {join, relative, resolve} from "node:path";
 import {scanSecurity} from "./securityRules";
 import {scanSecrets} from "./secretsScan";
-import {auditDependencies, findDependencyLine, groupVulnerabilities} from "./dependencyAudit";
+import {findDependencyLine, groupVulnerabilities} from "./dependencyAudit";
 import {SarifResult, canonicalRule, sarifLevel, toSarif} from "./sarif";
 import {runScanner} from "./externalScanners";
+import {auditDependenciesWithOsv, runCodeScanners, statusLine} from "./codeScanners";
 import {loadIgnore} from "./teamMemory";
 import {collectImports, findVulnerableCall, vulnerableSymbols} from "./reachability";
-import {flowSeverity, flowTitle, taintFlows, TaintFile} from "./taint";
+import {flowSeverity, flowTitle, initJavaParser, taintFlows, TaintFile} from "./taint";
 
 const SKIP = new Set([".git", "node_modules", "target", "build", "dist", "out", "coverage", ".venv", "venv", ".next", ".idea", ".vscode", "vendor", "__pycache__"]);
 const SOURCE = /\.(?:java|kt|py|js|jsx|mjs|cjs|ts|tsx|go|rs|cs|rb|php)$/;
@@ -30,7 +31,7 @@ async function semgrep(root: string, rules: string): Promise<SarifResult[]> {
   return result.findings.map(f => ({ruleId: canonicalRule(f.rule), message: f.message ?? f.rule, path: f.path, line: f.line, level: sarifLevel(f.severity)}));
 }
 
-/** Offline scan of a folder: bundled rules, semgrep (if installed), credentials, Trivy dependencies (if installed). */
+/** Offline scan of a folder: bundled rules, credentials and, when installed, Semgrep, FindSecBugs, Bandit, gosec, Trivy and OSV-Scanner. */
 export async function scanFolder(root: string, rules: string, log: (line: string) => void = () => undefined): Promise<SarifResult[]> {
   const results: SarifResult[] = [];
   const ignored = await loadIgnore(root);
@@ -50,6 +51,7 @@ export async function scanFolder(root: string, rules: string, log: (line: string
     if (!LOCKFILE.test(file)) for (const secret of scanSecrets(text, path))
       results.push({ruleId: "hardcoded-credential", message: "Potential hardcoded credential (" + secret.rule + "); value redacted", path, line: secret.line, level: "error"});
   }
+  await initJavaParser();
   for (const flow of taintFlows(taintFiles))
     results.push({ruleId: "taint-" + flow.kind, message: flowTitle(flow) + " (input at " + flow.source.path + ":" + flow.source.line + ")", path: flow.sink.path, line: flow.sink.line, level: sarifLevel(flowSeverity(flow))});
   const fromSemgrep = await semgrep(root, rules);
@@ -59,13 +61,21 @@ export async function scanFolder(root: string, rules: string, log: (line: string
     if (same >= 0) results[same] = r;
     else if (!results.some(x => x.path === r.path && x.line === r.line && x.ruleId === r.ruleId)) results.push(r);
   }
-  const audit = await auditDependencies(root);
-  log("trivy: " + audit.status + " (" + audit.findings + " vulnerabilities)");
-  for (const v of groupVulnerabilities(audit.vulnerabilities ?? [])) for (const target of v.targets.slice(0, 3)) {
+  // Optional analyzers only add what is new: a line already flagged by a built-in rule or Semgrep keeps that finding.
+  for (const scan of await runCodeScanners(root, {large: true, findSecBugsPlugin: process.env.HUSHAVYR_FINDSECBUGS_PLUGIN})) {
+    if (scan.status !== "skipped") log(statusLine(scan));
+    for (const f of scan.findings) {
+      if (results.some(x => x.path === f.path && x.line === f.line && x.ruleId !== "hardcoded-credential")) continue;
+      results.push({ruleId: f.rule, message: f.message + (f.cwe ? " (CWE-" + f.cwe + ")" : ""), path: f.path, line: f.line, level: sarifLevel(f.severity)});
+    }
+  }
+  const {audit, vulnerabilities, totals} = await auditDependenciesWithOsv(root, undefined, true);
+  for (const total of totals) log(total);
+  for (const v of groupVulnerabilities(vulnerabilities)) for (const target of v.targets.slice(0, 3)) {
     let line = 1;
     try { line = findDependencyLine(await readFile(join(root, target), "utf8"), v.pkg, v.installed); } catch { /* target is not a readable file */ }
     const call = findVulnerableCall(v.pkg, target + " " + (audit.manager ?? ""), vulnerableSymbols(v.pkg, v.title ?? ""), depFiles);
-    results.push({ruleId: v.id, message: v.id + " in " + v.pkg + " " + v.installed + (v.fixed ? ", fixed in " + v.fixed : ", no fix available") + (v.title ? ": " + v.title : "") +
+    results.push({ruleId: (v.source === "osv" ? "osv-" : "") + v.id, message: v.id + " in " + v.pkg + " " + v.installed + (v.fixed ? ", fixed in " + v.fixed : ", no fix available") + (v.title ? ": " + v.title : "") +
       (call ? " [vulnerable function " + call.symbol + " called at " + call.path + ":" + call.line + "]" : ""),
       path: target, line, level: sarifLevel(v.severity)});
   }

@@ -2,10 +2,11 @@ import {loadIgnore} from "./teamMemory";
 import {configuredClient} from "./model";
 import {tr} from "./i18n";
 import {uiLanguage} from "./trivyCommands";
-import {auditDependencies, trivyDbAgeDays, groupVulnerabilities, GroupedVulnerability} from "./dependencyAudit";
+import {trivyDbAgeDays, groupVulnerabilities, GroupedVulnerability} from "./dependencyAudit";
 import {runScanner} from "./externalScanners";
+import {auditDependenciesWithOsv, CodeFinding, runCodeScanners, scannerLabel, statusLine} from "./codeScanners";
 import {join, resolve, relative, isAbsolute} from "node:path";
-import {taintFlows, TaintFile} from "./taint";
+import {initJavaParser, taintFlows, TaintFile} from "./taint";
 import {collectImports, findVulnerableCall, reachability, SymbolCall, vulnerableSymbols} from "./reachability";
 import {scanSecurity} from "./securityRules";
 import {scanSecrets} from "./secretsScan";
@@ -93,12 +94,16 @@ export async function runWorkspaceScan(context: vscode.ExtensionContext, request
     }
     if (request.command === "scan" || request.command === "scan-changed") {
       stream.markdown(request.command === "scan"
-        ? "**Coverage:** Semgrep, Gitleaks, built-in rules, cross-file data flow, dependency CVEs (Trivy) and a per-file Ollama review. All local.\n\n"
+        ? "**Coverage:** Semgrep, Gitleaks, built-in rules, cross-file data flow, dependency CVEs (Trivy, OSV-Scanner), FindSecBugs, Bandit and gosec when installed, and a per-file Ollama review. All local.\n\n"
         : "**Coverage:** local credential heuristics and per-file Ollama review of changed files. Run `/scan` for every check.\n\n");
     }
     // /security = Semgrep with the bundled rule pack + built-in rules + credentials; one finding per line.
     const semgrepLines = new Set<string>();
     let semgrepCount = 0;
+    let analyzerCount = 0;
+    const analyzerTotals: string[] = [];
+    const findSecBugsPlugin = config.get<string>("findSecBugsPlugin", "") || undefined;
+    const analyzerAdvice = (f: CodeFinding): string => scannerLabel(f.tool) + " `" + f.rule.replace(/[`\r\n]/g, "") + "`" + (f.cwe ? " · CWE-" + f.cwe : "");
     if (request.command === "security") {
       const folders = vscode.workspace.workspaceFolders ?? [];
       for (const folder of folders) {
@@ -119,6 +124,17 @@ export async function runWorkspaceScan(context: vscode.ExtensionContext, request
             const severity = ({ERROR: "HIGH", WARNING: "MEDIUM", INFO: "LOW"} as Record<string, string>)[issue.severity.toUpperCase()] ?? "MEDIUM";
             stream.markdown("**" + severity + " · " + (issue.message ?? issue.rule).replace(/[\r\n`\[\]]/g, " ").slice(0, 160) + "** · " +
               findingLink(target, issue.line, vscode.workspace.asRelativePath(target) + ":" + issue.line) + " · Semgrep `" + issue.rule.replace(/[`\r\n]/g, "") + "`\n\n");
+          }
+        }
+        // FindSecBugs, Bandit and gosec: optional, silently skipped when missing; one finding per line.
+        for (const scan of await runCodeScanners(folder.uri.fsPath, {signal: controller.signal, findSecBugsPlugin})) {
+          if (scan.status !== "skipped") analyzerTotals.push(statusLine(scan));
+          for (const issue of scan.findings) {
+            const target = vscode.Uri.file(resolve(folder.uri.fsPath, issue.path));
+            if (ignored(target) || semgrepLines.has(target.fsPath + ":" + issue.line)) continue;
+            semgrepLines.add(target.fsPath + ":" + issue.line);
+            analyzerCount++;
+            stream.markdown("**" + issue.severity + " · " + issue.message + "** · " + findingLink(target, issue.line, vscode.workspace.asRelativePath(target) + ":" + issue.line) + " · " + analyzerAdvice(issue) + "\n\n");
           }
         }
       }
@@ -158,11 +174,13 @@ export async function runWorkspaceScan(context: vscode.ExtensionContext, request
       }
       if (request.command === "dependencies") {
         for (const folder of vscode.workspace.workspaceFolders ?? []) {
-          const audit = await auditDependencies(folder.uri.fsPath, controller.signal);
+          const {audit, osv, vulnerabilities} = await auditDependenciesWithOsv(folder.uri.fsPath, controller.signal);
           const lang = uiLanguage();
           stream.markdown("**" + tr(lang, "auditHeader") + "** " + audit.status + " · " + tr(lang, "ecosystem") + ": " +
             (audit.manager ?? "unknown") + " · " + tr(lang, "reported") + ": " + audit.findings +
             ". " + audit.note + ". " + tr(lang, "noCloud") + "\n\n");
+          if (osv.status === "ok") stream.markdown("**OSV-Scanner (offline database):** " + (vulnerabilities.length - (audit.vulnerabilities ?? []).length) + " additional vulnerabilities not reported by Trivy.\n\n");
+          else if (osv.reason === "db-missing") stream.markdown("**OSV-Scanner:** no offline vulnerability database yet; run **Hushavyr: Setup** to download one. Skipped.\n\n");
           const age = audit.status === "ok" ? await trivyDbAgeDays() : undefined;
           if (age !== undefined && age > 7) stream.markdown("**" + age + " " + tr(lang, "dbDays") + ".** " + tr(lang, "dbStale") + "\n\n");
           // Packages the project source actually imports come first; the rest are usually transitive or unused.
@@ -175,7 +193,7 @@ export async function runWorkspaceScan(context: vscode.ExtensionContext, request
             return calls.get(v);
           };
           const order = {"imported": 1, "unknown": 2, "not-imported": 3};
-          const groups = groupVulnerabilities(audit.vulnerabilities ?? []).map((v, index) => ({v, index, r: called(v) ? 0 : order[reach(v)]}))
+          const groups = groupVulnerabilities(vulnerabilities).map((v, index) => ({v, index, r: called(v) ? 0 : order[reach(v)]}))
             .sort((a, b) => a.r - b.r || a.index - b.index).map(x => x.v);
           const reached = groups.filter(v => reach(v) === "imported").length;
           const unreached = groups.filter(v => reach(v) === "not-imported").length;
@@ -185,7 +203,7 @@ export async function runWorkspaceScan(context: vscode.ExtensionContext, request
             const r = reach(v);
             const id = /^CVE-\d{4}-\d{4,}$/.test(v.id) ? "[" + v.id + "](https://nvd.nist.gov/vuln/detail/" + v.id + ")" : "`" + v.id.replace(/`/g, "") + "`";
             const files = v.targets.slice(0, 5).map(t => "`" + t.replace(/`/g, "") + "`").join(", ") + (v.targets.length > 5 ? " +" + (v.targets.length - 5) + " more" : "");
-            stream.markdown("- **" + v.severity + "** · " + id + " · `" + v.pkg.replace(/`/g, "") + " " + v.installed.replace(/`/g, "") + "` · " +
+            stream.markdown("- **" + v.severity + "** · " + id + (v.source === "osv" ? " · OSV" : "") + " · `" + v.pkg.replace(/`/g, "") + " " + v.installed.replace(/`/g, "") + "` · " +
               (v.fixed ? tr(lang, "fixedIn") + " `" + v.fixed.replace(/`/g, "") + "`" : tr(lang, "noFix")) + (files ? " · " + tr(lang, "inFiles") + " " + files : "") + (v.title ? " · " + v.title.replace(/[\[\]<>`]/g, "") : "") +
               (called(v) ? " · **" + tr(lang, "tagCalled") + " " + findingLink(depUris.get(called(v)!.path)!, called(v)!.line, called(v)!.path + ":" + called(v)!.line) + " (`" + called(v)!.symbol + "`)**" :
               r === "imported" ? " · **" + tr(lang, "tagImported") + "**" : r === "not-imported" ? " · _" + tr(lang, "tagNotImported") + "_" : "") + "\n");
@@ -219,11 +237,12 @@ export async function runWorkspaceScan(context: vscode.ExtensionContext, request
       }
       let flowCount = 0;
       if (request.command === "security" && !token.isCancellationRequested) {
+        await initJavaParser();
         const flows = taintFlows(taintFiles);
         flowCount = flows.length;
         streamFlows(flows, uriOf, stream);
       }
-      stream.markdown("**Local security summary:** " + files.length + " source files checked; " + sourceFindings + " potential credentials, " + securityFindings + " security indicators" + (request.command === "security" ? ", " + semgrepCount + " Semgrep findings, " + flowCount + " cross-file data flows" : "") + ". No Ollama or cloud requests. These findings require manual verification.\n\n");
+      stream.markdown("**Local security summary:** " + files.length + " source files checked; " + sourceFindings + " potential credentials, " + securityFindings + " security indicators" + (request.command === "security" ? ", " + semgrepCount + " Semgrep findings, " + analyzerCount + " FindSecBugs/Bandit/gosec findings" + (analyzerTotals.length ? " (" + analyzerTotals.join("; ") + ")" : "") + ", " + flowCount + " cross-file data flows" : "") + ". No Ollama or cloud requests. These findings require manual verification.\n\n");
       return;
     }
     if (!files.length) {
@@ -257,6 +276,22 @@ export async function runWorkspaceScan(context: vscode.ExtensionContext, request
               : "Inspect the flagged code and rule; verify the risk and apply the rule-specific remediation.";
             stream.markdown("  - **" + safeSeverity + " · " + tool + " · " + safeRule +
               "** · " + location + " · " + advice + " (sensitive values hidden)\n");
+          }
+        }
+        if (token.isCancellationRequested) { completed = false; break; }
+        for (const scan of await runCodeScanners(folder.uri.fsPath, {signal: controller.signal, findSecBugsPlugin})) {
+          if (scan.status === "skipped") continue;
+          const kept = scan.findings.filter(f => {
+            const target = vscode.Uri.file(resolve(folder.uri.fsPath, f.path));
+            return !ignored(target) && !scannerLines.has(target.fsPath + ":" + f.line);
+          });
+          scannerTotals.push(statusLine({...scan, findings: kept}));
+          scannerFindingCount += kept.length;
+          stream.markdown("- **" + scan.tool + "**: " + (scan.reason === "plugin-missing" ? "missing plugin" : scan.status) + " · " + kept.length + " findings\n");
+          for (const finding of kept) {
+            const target = vscode.Uri.file(resolve(folder.uri.fsPath, finding.path));
+            scannerLines.add(target.fsPath + ":" + finding.line);
+            stream.markdown("  - **" + finding.severity + " · " + finding.message + "** · " + findingLink(target, finding.line, finding.path + ":" + finding.line) + " · " + analyzerAdvice(finding) + "\n");
           }
         }
       }

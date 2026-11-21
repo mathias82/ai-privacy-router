@@ -26,3 +26,6 @@
 # End-to-end test sources and build output
 e2e/**
 **/dist/e2e/**
+
+# Build helper (dist/vendor holds its output)
+**/scripts/vendor-tree-sitter.cjs
