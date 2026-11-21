@@ -59,6 +59,8 @@ async function chat(files: Record<string, string>, responses: string[], prompt =
     if (url.endsWith("/api/tags")) return new Response(JSON.stringify({models: [{name: "qwen2.5-coder:7b"}]}));
     const response = responses.shift();
     assert.equal(typeof response, "string", "unexpected model invocation");
+    if (requests[requests.length - 1].payload?.stream === true)
+      return new Response(JSON.stringify({response}) + "\n" + JSON.stringify({response: "", done: true}) + "\n");
     return new Response(JSON.stringify({response}));
   };
   try {

@@ -13,6 +13,8 @@ export interface ReviewOptions {
   depth?: ReviewDepth;
   /** Static analyzer candidates (semgrep / bundled rules), triaged together with the model's findings. */
   staticFindings?: Promise<Finding[]>;
+  /** Live status lines, e.g. "Security pass: 2 candidate(s)", shown while the review runs. */
+  onProgress?: (message: string) => void;
 }
 
 // Appended after the shared prompt so every pass reuses the same prompt prefix (Ollama keeps its KV cache).
@@ -34,13 +36,20 @@ export function mergeFindings(...lists: readonly Finding[][]): Finding[] {
   return merged;
 }
 
+const LENS_NAMES = ["Security pass", "Robustness pass"];
+const candidates = (r: ReviewResult): string => r.findings.length + " candidate(s)";
+
 async function lensFindings(client: Pick<LocalOllama, "generate">, prompt: string, source: ReviewInput,
-  cancelled: () => boolean): Promise<ReviewResult[]> {
+  cancelled: () => boolean, onProgress?: (message: string) => void): Promise<ReviewResult[]> {
   const results: ReviewResult[] = [];
-  for (const lens of LENSES) {
+  for (const [i, lens] of LENSES.entries()) {
     if (cancelled()) break;
-    try { results.push(validateReview(await client.generate(prompt + "\n\n" + lens, {schema: reviewSchema}), source)); }
-    catch { /* one failed lens must not discard the other passes */ }
+    onProgress?.(LENS_NAMES[i] + "...");
+    try {
+      const result = validateReview(await client.generate(prompt + "\n\n" + lens, {schema: reviewSchema}), source);
+      results.push(result);
+      onProgress?.(LENS_NAMES[i] + ": " + candidates(result));
+    } catch { /* one failed lens must not discard the other passes */ }
   }
   return results;
 }
@@ -51,16 +60,19 @@ async function collectFindings(
   instruction: string,
   source: ReviewInput,
   cancelled: () => boolean = () => false,
-  depth: ReviewDepth = "fast"
+  depth: ReviewDepth = "fast",
+  onProgress?: (message: string) => void
 ): Promise<ReviewResult | undefined> {
   if (cancelled()) return;
   const prompt = reviewPrompt(instruction, source);
+  onProgress?.("General pass...");
   const raw = await client.generate(prompt, depth === "light" ? {schema: reviewSchema, maxTokens: 1536} : {schema: reviewSchema});
   if (cancelled()) return;
   const first = validateReview(raw, source);
+  onProgress?.("General pass: " + candidates(first));
   if (depth === "light") return first;
   if (depth === "thorough") {
-    const passes = [first, ...await lensFindings(client, prompt, source, cancelled)];
+    const passes = [first, ...await lensFindings(client, prompt, source, cancelled, onProgress)];
     if (cancelled()) return;
     return {...first, findings: mergeFindings(...passes.map(p => p.findings)),
       proposed: passes.reduce((n, p) => n + (p.proposed ?? 0), 0),
@@ -148,12 +160,15 @@ export async function runLocalReview(
   options: ReviewOptions = {}
 ): Promise<ReviewResult | undefined> {
   validateContext(instruction, reviewSources(source));
-  const model = await collectFindings(client, instruction, source, cancelled, options.depth);
+  const progress = options.onProgress;
+  const model = await collectFindings(client, instruction, source, cancelled, options.depth, progress);
   if (!model || cancelled()) return;
   const staticCandidates = options.staticFindings ? await options.staticFindings.catch(() => []) : [];
+  if (options.staticFindings) progress?.("Static rules (Semgrep): " + staticCandidates.length + " candidate(s)");
   const result = staticCandidates.length && !model.error
     ? {...model, findings: mergeFindings(model.findings, staticCandidates), staticCandidates: staticCandidates.length}
     : model;
+  if (verifier && result.findings.length) progress?.("Second local pass: checking " + result.findings.length + " finding(s) against the source...");
   const verified = verifier ? await verifyReview(verifier, result, source, cancelled) : result;
   if (!verified || cancelled()) return;
   return {...verified, findings: mergeFindings(verified.findings, offlineSecurityFindings(source))};

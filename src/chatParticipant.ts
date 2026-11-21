@@ -399,9 +399,10 @@ export function registerChatParticipant(context: vscode.ExtensionContext, review
         if (name && name !== model) await new LocalOllama({model: name, endpoint, timeoutMs}).ensureInstalled(controller.signal, notifyPull(name));
       }
       if (!isReview) {
-        const result = await client.generate(prompt, {signal: controller.signal});
-        if (!token.isCancellationRequested) stream.markdown(result + (explains && request.command === "review"
-          ? "\n\n_/review looks for bugs and security issues only; for explanations use `@ai-privacy /explain`._" : ""));
+        // Prose answers stream as the local model writes them.
+        await client.generate(prompt, {signal: controller.signal, onText: chunk => { if (!token.isCancellationRequested) stream.markdown(chunk); }});
+        if (!token.isCancellationRequested && explains && request.command === "review")
+          stream.markdown("\n\n_/review looks for bugs and security issues only; for explanations use `@ai-privacy /explain`._");
       } else {
         const verifierModel = config.get<string>("verifierModel", "").trim() || model;
         const verifier = verifierModel === model ? client : new LocalOllama({model: verifierModel, endpoint, timeoutMs});
@@ -423,7 +424,7 @@ export function registerChatParticipant(context: vscode.ExtensionContext, review
         if (!cached) stream.progress(depth === "thorough" ? "Local review: general, security and robustness passes + static rules..." : depth === "light" ? "Local review (light mode for this machine's memory)..." : "Local review...");
         // Each pass has a fresh prompt; the same model may serve both passes.
         const validated: ReviewResult | undefined = cached ? {...cached, cached: true} : await runLocalReview(withSignal(client), reviewInstruction, sources,
-          () => token.isCancellationRequested, withSignal(verifier), {depth, staticFindings});
+          () => token.isCancellationRequested, withSignal(verifier), {depth, staticFindings, onProgress: message => { if (!token.isCancellationRequested) stream.progress(message); }});
         if (validated && !validated.error && !cached && !token.isCancellationRequested) reviewCache.set(key, validated);
         if (validated && !token.isCancellationRequested) {
           const dismissals = (await Promise.all((vscode.workspace.workspaceFolders ?? []).map(f => loadDismissals(f.uri.fsPath)))).flat();
@@ -433,8 +434,13 @@ export function registerChatParticipant(context: vscode.ExtensionContext, review
             return vscode.workspace.getWorkspaceFolder(uri) ? vscode.workspace.asRelativePath(uri, false) : undefined;
           });
           const shown = {...validated, findings: kept};
-          stream.markdown(formatReview(shown, relativeLocation) + modelHint(model, shown) +
-            (hidden ? "\n\n_" + hidden + " finding(s) hidden: dismissed by your team in `.hushavyr/dismissed.json`._" : ""));
+          // One finding at a time, so a long review reads like a streamed answer.
+          for (const part of (formatReview(shown, relativeLocation) + modelHint(model, shown)).split(/(?=^#### )/m)) {
+            if (token.isCancellationRequested) return;
+            stream.markdown(part);
+            if (!cached) await new Promise(resolve => setTimeout(resolve, 120));
+          }
+          if (hidden) stream.markdown("\n\n_" + hidden + " finding(s) hidden: dismissed by your team in `.hushavyr/dismissed.json`._");
           if (!validated.error) publishFindings(reviewDiagnostics, kept);
         }
       }

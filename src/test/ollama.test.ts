@@ -108,3 +108,21 @@ test("remote model inventory entries cannot pass local availability checks", asy
   })));
   await assert.rejects(client.ensureAvailable(), /Remote Ollama model rejected/);
 });
+
+test("prose answers stream NDJSON chunks to onText", async () => {
+  const client = new LocalOllama({model:"qwen2.5-coder:7b"}, async (url, init) => {
+    if (url.endsWith("/api/show")) return new Response(JSON.stringify({model_info: {"general.architecture": "qwen2"}}));
+    assert.equal(JSON.parse(String(init.body)).stream, true);
+    return new Response('{"response":"Hel"}\n{"response":"lo"}\n{"response":"","done":true}');
+  });
+  const chunks: string[] = [];
+  assert.equal(await client.generate("Explain", {onText: chunk => chunks.push(chunk)}), "Hello");
+  assert.deepEqual(chunks, ["Hel", "lo"]);
+});
+test("truncated streams fail without cloud fallback", async () => {
+  const client = new LocalOllama({model:"qwen2.5-coder:7b"}, async (url) => {
+    if (url.endsWith("/api/show")) return new Response(JSON.stringify({model_info: {"general.architecture": "qwen2"}}));
+    return new Response('{"response":"Hel"}\n');
+  });
+  await assert.rejects(client.generate("Explain", {onText: () => undefined}), /No cloud fallback/);
+});

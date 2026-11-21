@@ -1,6 +1,8 @@
 export interface LocalModelConfig { model: string; timeoutMs?: number; endpoint?: string; /** Context window; smaller is faster and uses less memory. */ contextTokens?: number }
 export interface OllamaTransport { (url: string, init: RequestInit): Promise<Response> }
-export interface GenerateOptions { json?: boolean; schema?: object; signal?: AbortSignal; maxTokens?: number }
+export interface GenerateOptions { json?: boolean; schema?: object; signal?: AbortSignal; maxTokens?: number;
+  /** Prose answers only: called with each text chunk as the local model writes it. */
+  onText?: (chunk: string) => void }
 
 export function localEndpoint(value = "http://127.0.0.1:11434"): string {
   const url = new URL(value);
@@ -127,6 +129,7 @@ export class LocalOllama {
     if (options.signal?.aborted) throw new Error("Local request cancelled");
     await this.assertLocalModel(options.signal);
     if (options.signal?.aborted) throw new Error("Local request cancelled");
+    if (options.onText && !options.schema && !options.json) return this.streamGenerate(prompt, options.onText, options.signal);
     const data = await this.request("/api/generate", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({model: this.config.model, prompt, stream: false, keep_alive: "30m",
@@ -134,5 +137,46 @@ export class LocalOllama {
     }, options.signal);
     if (!data || typeof data !== "object" || !("response" in data) || typeof data.response !== "string") throw new Error("Invalid local Ollama response. No cloud fallback.");
     return data.response;
+  }
+  private async streamGenerate(prompt: string, onText: (chunk: string) => void, signal?: AbortSignal): Promise<string> {
+    const controller = new AbortController();
+    const abort = (): void => controller.abort();
+    if (signal?.aborted) abort();
+    signal?.addEventListener("abort", abort, {once: true});
+    const timeout = setTimeout(abort, this.config.timeoutMs ?? 120000);
+    let text = "";
+    try {
+      const response = await this.transport(this.base + "/api/generate", {
+        method: "POST", headers: {"Content-Type": "application/json"}, redirect: "error", signal: controller.signal,
+        body: JSON.stringify({model: this.config.model, prompt, stream: true, keep_alive: "30m"})
+      });
+      if (!response.ok || !response.body) throw new Error("HTTP error");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "", done = false;
+      const handle = (line: string): void => {
+        if (!line.trim()) return;
+        const event = JSON.parse(line) as {response?: unknown; done?: unknown; error?: unknown};
+        if (event.error || (event.response !== undefined && typeof event.response !== "string")) throw new Error("Invalid event");
+        if (typeof event.response === "string" && event.response) { text += event.response; onText(event.response); }
+        if (event.done === true) done = true;
+      };
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, {stream: true});
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        lines.forEach(handle);
+      }
+      handle(buffer);
+      if (!done) throw new Error("Incomplete stream");
+      return text;
+    } catch {
+      throw new Error("Local Ollama unavailable or request failed. No cloud fallback.");
+    } finally {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
+    }
   }
 }
