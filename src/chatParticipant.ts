@@ -47,6 +47,11 @@ async function workspaceCodeFiles(current: string): Promise<CodeFile[]> {
 
 
 /** The @ai-privacy chat participant: routing, local edit/review/scan, and the editor selection it falls back to. */
+/** File URIs in review output are shown relative to the workspace; anything else is shown as-is. */
+function relativeLocation(path: string): string {
+  try { return path.startsWith("file:") ? vscode.workspace.asRelativePath(vscode.Uri.parse(path), false) : path; } catch { return path; }
+}
+
 export function registerChatParticipant(context: vscode.ExtensionContext, reviewDiagnostics: vscode.DiagnosticCollection,
   autoPrompt: ReturnType<typeof createAutoPrompt>): void {
   // Remember the last non-empty editor selection when focus moves into Chat.
@@ -428,7 +433,7 @@ export function registerChatParticipant(context: vscode.ExtensionContext, review
             return vscode.workspace.getWorkspaceFolder(uri) ? vscode.workspace.asRelativePath(uri, false) : undefined;
           });
           const shown = {...validated, findings: kept};
-          stream.markdown(formatReview(shown) + modelHint(model, shown) +
+          stream.markdown(formatReview(shown, relativeLocation) + modelHint(model, shown) +
             (hidden ? "\n\n_" + hidden + " finding(s) hidden: dismissed by your team in `.hushavyr/dismissed.json`._" : ""));
           if (!validated.error) publishFindings(reviewDiagnostics, kept);
         }

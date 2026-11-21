@@ -79,7 +79,7 @@ export function validateReview(raw: string, source: ReviewInput): ReviewResult {
     const matched = eligible.find(s => s.text.replace(/\r\n/g,"\n").includes(evidence.replace(/\r\n/g,"\n")));
     const normalizedSource = matched?.text.replace(/\r\n/g,"\n") ?? "";
     const exactEvidence = evidence.length >= 8 && normalizedSource.includes(evidence.replace(/\r\n/g,"\n"));
-    const hasSqlSink = /\b(prepareStatement|createStatement|executeQuery|executeUpdate|EntityManager|createNativeQuery|JdbcTemplate|SELECT\s|INSERT\s|UPDATE\s|DELETE\s)\b/i.test(combined);
+    const hasSqlSink = /\b(?:prepareStatement|createStatement|executeQuery|executeUpdate|EntityManager|createNativeQuery|JdbcTemplate)\b|\b(?:SELECT|INSERT|UPDATE|DELETE)\s/i.test(combined);
     const unsupportedSql = /sql\s*injection/i.test(title) && !hasSqlSink;
     const unsupportedGetter = /(?:exception handling|unhandled exception)/i.test(title) && /getTenantId\(\)/.test(evidence) && !/throw\s+new/.test(combined);
     const reasons: string[] = [];
@@ -117,7 +117,7 @@ export function reviewSummary(result: ReviewResult): string {
     "  \n**Fix first:** " + first.title.replace(/^Local rule: /, "") + " (`" + shortPath(first.path) + ":" + (first.line ?? "?") + "`)";
 }
 
-export function formatReview(result: ReviewResult): string {
+export function formatReview(result: ReviewResult, displayPath: (path: string) => string = p => p): string {
   if (result.error) return "**Review not verified:** " + result.error + ". No findings promoted." +
     (result.retryFailed ? " The local repair attempt also failed." : "") + " Try again with a smaller selection.";
   const lines = ["### Evidence-gated local review", "", reviewSummary(result), "", "All findings are **potential**, not confirmed. Tests were suggested, not executed.", ""];
@@ -129,7 +129,7 @@ export function formatReview(result: ReviewResult): string {
   for (const [i,f] of result.findings.entries()) lines.push(
     "#### " + (i+1) + ". " + f.title,
     "**Status:** Potential · **Severity:** " + f.severity,
-    "**Location:** " + JSON.stringify(f.path ?? "selection") + ":" + (f.line ?? "?"),
+    "**Location:** \x60" + (f.path ? displayPath(f.path) : "selection").replace(/\x60/g, "") + ":" + (f.line ?? "?") + "\x60",
     "**Second local pass:** " + (f.verification === "supported" ? "Source support agreed; no runtime proof." : "Not verified."),
     "**Source evidence:**", "\x60\x60\x60java\n" + f.evidence + "\n\x60\x60\x60",
     "**Proposed fix:** " + f.fix,

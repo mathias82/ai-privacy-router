@@ -4,6 +4,7 @@ import { ReviewInput, reviewSources, validateContext } from "./context";
 import { verifyReview } from "./verifyReview";
 import { scanSecurity } from "./securityRules";
 import { Finding } from "./review";
+import { flowSeverity, flowTitle, taintFlows } from "./taint";
 
 export type ReviewDepth = "fast" | "thorough" | "light";
 export interface ReviewOptions {
@@ -106,6 +107,19 @@ function offlineSecurityFindings(source: ReviewInput): Finding[] {
         });
         if (findings.length >= 10) return findings;
       }
+    }
+    // Source-to-sink flows from the deterministic taint engine (same engine as /security), so a small model cannot drop them.
+    for (const flow of taintFlows([{path: file.path, text: file.text}])) {
+      const evidence = lines[flow.sink.line - 1];
+      if (flow.sink.path !== file.path || !evidence || evidence.trim().length < 8) continue;
+      findings.push({
+        title: "Local rule: " + flowTitle(flow),
+        severity: flowSeverity(flow), evidence,
+        fix: "Do not build the sink argument from request input: use parameterized APIs, an allow-list or proper encoding.",
+        regressionTest: "Send a malicious value in the request parameter from line " + ((file.startLine ?? 1) + flow.source.line - 1) + " and assert it is rejected or treated as data.",
+        status: "potential", path: file.path, line: (file.startLine ?? 1) + flow.sink.line - 1
+      });
+      if (findings.length >= 10) return findings;
     }
     for (const issue of scanSecurity(file.path, file.text)) {
       // Only surface high-confidence, directly visible TLS misconfiguration here.

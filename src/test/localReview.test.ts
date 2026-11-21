@@ -118,6 +118,15 @@ test("review adds a clearly labeled offline TLS indicator when Qwen returns zero
   assert.match(formatReview(result!), /Local rule: TLS certificate validation disabled/);
 });
 
+test("review keeps a taint-engine SQL injection even when the verifier rejects everything", async () => {
+  const vulnerable = [{path: "books.js", text: "router.get('/books', (req, res) => {\n  const author = req.query.author;\n  db.query(\"SELECT * FROM books WHERE author = '\" + author + \"'\", cb);\n});"}];
+  const {client} = scripted(['{"findings":[]}', '{"findings":[]}']);
+  const result = await runLocalReview(client, "review", vulnerable, () => false, scripted(['{"verdicts":[]}']).client);
+  assert.equal(result?.findings.length, 1);
+  assert.equal(result?.findings[0].line, 3);
+  assert.match(result!.findings[0].title, /^Local rule: SQL injection/);
+});
+
 test("review does not flag safe TLS or unrelated command execution", async () => {
   for (const code of [
     'const agent = new https.Agent({rejectUnauthorized: true});',
