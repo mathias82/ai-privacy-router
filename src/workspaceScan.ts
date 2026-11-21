@@ -89,7 +89,7 @@ export async function runWorkspaceScan(context: vscode.ExtensionContext, request
           stream.markdown("**" + finding.severity + "** · " + finding.rule + " · " + findingLink(uri, finding.line, relative + ":" + finding.line) + " (value redacted)\n\n");
         }
       }
-      stream.markdown("**Local configuration secrets scan:** " + secretFiles.length + " files checked; " + secretFindings + " potential credential findings.\n\n");
+      stream.markdown("**Configuration files** (.env, YAML, JSON, properties): " + secretFiles.length + " checked, " + secretFindings + " potential credential(s).\n\n");
     }
     }
     if (request.command === "scan" || request.command === "scan-changed") {
