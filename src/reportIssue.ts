@@ -16,7 +16,7 @@ export function registerReportIssue(context: vscode.ExtensionContext): void {
     const keys = Object.keys((context.extension?.packageJSON?.contributes?.configuration?.properties ?? {}) as object)
       .map(key => key.replace(/^aiPrivacyRouter\./, ""));
     const settings = Object.fromEntries(keys.map(key => [key, config.get(key)]));
-    const tools = Object.fromEntries(await Promise.all(["ollama", "docker", "semgrep", "trivy", "gitleaks"].map(async t => [t, await onPath(t)] as const)));
+    const tools = Object.fromEntries(await Promise.all(["ollama", "docker", "semgrep", "trivy", "gitleaks", "spotbugs", "bandit", "gosec", "osv-scanner"].map(async t => [t, await onPath(t)] as const)));
     const body = formatReport({extension: String(context.extension?.packageJSON?.version ?? "unknown"), vscode: vscode.version,
       os: platform() + " " + release() + " " + arch(), memoryGb: Math.round(totalmem() / 2 ** 30), settings, tools, problem});
     const preview = await vscode.workspace.openTextDocument({content: body, language: "markdown"});

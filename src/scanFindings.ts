@@ -1,6 +1,7 @@
 // Deterministic scan helpers shared by the workspace scan: chat links, taint flows and local rule/secret findings.
 import {markDependencies} from "./dependencyMarkers";
-import {auditDependencies, groupVulnerabilities, GroupedVulnerability} from "./dependencyAudit";
+import {groupVulnerabilities, GroupedVulnerability} from "./dependencyAudit";
+import {auditDependenciesWithOsv} from "./codeScanners";
 import {join} from "node:path";
 import {flowSeverity, flowTitle, taintFlows, TaintFile, TaintFlow} from "./taint";
 import {collectImports, findVulnerableCall, reachability, vulnerableSymbols} from "./reachability";
@@ -33,7 +34,7 @@ export async function readSmallText(uri: vscode.Uri): Promise<string | undefined
   } catch { return undefined; }
 }
 
-/** /scan runs everything that is deterministic too: built-in rules, cross-file data flow and dependency CVEs (Trivy). */
+/** /scan runs everything that is deterministic too: built-in rules, cross-file data flow and dependency CVEs (Trivy, OSV-Scanner). */
 export async function deterministicForScan(context: vscode.ExtensionContext, files: readonly vscode.Uri[], seen: ReadonlySet<string>,
   stream: vscode.ChatResponseStream, token: vscode.CancellationToken, signal: AbortSignal): Promise<string[]> {
   const taintFiles: TaintFile[] = [];
@@ -63,10 +64,10 @@ export async function deterministicForScan(context: vscode.ExtensionContext, fil
   const totals = ["built-in rules: " + rules, "data flows: " + flows.length];
   for (const folder of vscode.workspace.workspaceFolders ?? []) {
     if (token.isCancellationRequested) break;
-    const audit = await auditDependencies(folder.uri.fsPath, signal);
-    totals.push("trivy: " + audit.status + " (" + audit.findings + " vulnerabilities)");
-    if (audit.status === "missing") { await offerToolInstallation("trivy"); continue; }
-    const groups = groupVulnerabilities(audit.vulnerabilities ?? []);
+    const {audit, osv, vulnerabilities, totals: counts} = await auditDependenciesWithOsv(folder.uri.fsPath, signal);
+    totals.push(...counts);
+    if (audit.status === "missing") await offerToolInstallation("trivy");
+    const groups = groupVulnerabilities(vulnerabilities);
     if (!groups.length) continue;
     const eco = (v: GroupedVulnerability) => v.targets.join(" ") + " " + (audit.manager ?? "");
     const rows = groups.map(v => {
@@ -74,10 +75,10 @@ export async function deterministicForScan(context: vscode.ExtensionContext, fil
       const call = reach === "imported" ? findVulnerableCall(v.pkg, eco(v), vulnerableSymbols(v.pkg, v.title ?? ""), depFiles) : undefined;
       return {v, call, rank: call ? 0 : reach === "imported" ? 1 : reach === "unknown" ? 2 : 3};
     }).sort((a, b) => a.rank - b.rank);
-    stream.markdown("**Dependency vulnerabilities (Trivy, offline):** " + groups.length + " · " + rows.filter(r => r.rank === 0).length + " with the vulnerable function called · " +
+    stream.markdown("**Dependency vulnerabilities (" + (audit.status === "ok" ? "Trivy" : "") + (audit.status === "ok" && osv.status === "ok" ? " + " : "") + (osv.status === "ok" ? "OSV-Scanner" : "") + ", offline):** " + groups.length + " · " + rows.filter(r => r.rank === 0).length + " with the vulnerable function called · " +
       rows.filter(r => r.rank === 1).length + " imported by your code\n\n");
     for (const {v, call, rank} of rows.slice(0, 20)) {
-      stream.markdown("- **" + v.severity + "** · `" + (v.id + " " + v.pkg + " " + v.installed).replace(/`/g, "") + "` · " + (v.fixed ? "fixed in `" + v.fixed.replace(/`/g, "") + "`" : "no fix") +
+      stream.markdown("- **" + v.severity + "** · `" + (v.id + " " + v.pkg + " " + v.installed).replace(/`/g, "") + "`" + (v.source === "osv" ? " · OSV" : "") + " · " + (v.fixed ? "fixed in `" + v.fixed.replace(/`/g, "") + "`" : "no fix") +
         (call ? " · **vulnerable function `" + call.symbol + "` called at " + findingLink(uriOf.get(call.path)!, call.line, call.path + ":" + call.line) + "**" : rank === 1 ? " · used in code" : rank === 3 ? " · _not imported directly_" : "") + "\n");
     }
     stream.markdown(rows.length > 20 ? "\n_" + (rows.length - 20) + " more: run `/dependencies` for the full list._\n\n" : "\n");

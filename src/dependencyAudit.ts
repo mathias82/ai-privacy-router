@@ -2,7 +2,7 @@ import {join} from "node:path";
 import {access,readFile} from "node:fs/promises";
 import {homedir} from "node:os";
 import {exec} from "./exec";
-export interface DependencyVulnerability {id:string;pkg:string;installed:string;fixed?:string;severity:string;title:string;target:string}
+export interface DependencyVulnerability {id:string;pkg:string;installed:string;fixed?:string;severity:string;title:string;target:string;source?:"osv"}
 export interface DependencyAudit {status:"ok"|"missing"|"failed"|"unsupported";manager?:string;findings:number;note:string;vulnerabilities?:DependencyVulnerability[]}
 const SEVERITY_ORDER=["CRITICAL","HIGH","MEDIUM","LOW","UNKNOWN"];
 /** Scanner output is untrusted: keep short printable text only. */

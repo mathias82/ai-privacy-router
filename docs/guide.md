@@ -260,6 +260,20 @@ Settings are application-scoped, so repository settings cannot relax the user's 
 | `aiPrivacyRouter.fixMavenImage` | `maven:3.9-eclipse-temurin-21` | Preloaded image for offline Java regression proof; resolved to local immutable image ID |
 | `aiPrivacyRouter.mandatoryLocalOnly` | false | When true, prevents all cloud routes and review-only approvals |
 | `aiPrivacyRouter.requireReviewer` | false | Denies approvals without a verified reviewer callback |
+| `aiPrivacyRouter.findSecBugsPlugin` | empty | Path to `findsecbugs-plugin.jar`; empty uses `~/.hushavyr/findsecbugs-plugin.jar` (the CLI reads `HUSHAVYR_FINDSECBUGS_PLUGIN`) |
+
+## Optional offline analyzers
+
+`/security`, `/scan` and the `hushavyr-scan` CLI also run these tools when they are installed. A missing tool is skipped; it never fails a scan. **Hushavyr: Setup** offers each one (with your confirmation) only when the workspace has matching code.
+
+| Tool | Runs when | Kept findings | Rule ids |
+| --- | --- | --- | --- |
+| FindSecBugs (SpotBugs + plugin jar) | Compiled classes exist in `target/classes` or `build/classes/{java,kotlin,scala,groovy}/main`; build first | `SECURITY` category, rank 1-14, priority high/medium | `findsecbugs-<TYPE>` |
+| Bandit | The project has Python files | Medium/high severity **and** confidence; no B101 (`assert`), no test folders or `test_*.py` | `bandit-<ID>` |
+| gosec | `go.mod` at the folder root; runs with `GOPROXY=off` | Medium/high severity and confidence; no G104, no `_test.go` | `gosec-<ID>` |
+| OSV-Scanner | A dependency manifest exists; runs `scan source --offline --no-resolve` | CVEs not already reported by Trivy (same package and id/alias) | `osv-<ID>` in SARIF |
+
+A line already flagged by a built-in rule or Semgrep keeps that one finding, and two analyzer rules for the same weakness on one line count once. OSV-Scanner needs a local database: Setup offers to download it (`osv-scanner scan source --offline-vulnerabilities --download-offline-databases --no-resolve -r <folder>`), which fetches public OSV.dev archives for the ecosystems in the folder. Without it, OSV-Scanner is skipped.
 
 Chat checks Ollama's local model inventory, and every generation verifies local model metadata before sending its prompt. Review requests reserve a 32,768-token context window and cap output at 4,096 tokens. The conservative source and prompt byte budgets reduce accidental context truncation; model compatibility and quality still need local measurement. The startup script manages the default endpoint; custom loopback servers must be started separately.
 

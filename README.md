@@ -24,7 +24,7 @@ This is a brand interpretation, not a literal translation of an existing word.
 ## Install
 
 1. Install **Hushavyr** from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=mathias82.hushavyr).
-2. Run **Hushavyr: Setup** from the Command Palette. It installs or downloads Ollama, a local model and, if you agree, Semgrep, Gitleaks and Trivy. Nothing is installed without asking you.
+2. Run **Hushavyr: Setup** from the Command Palette. It installs or downloads Ollama, a local model and, if you agree, Semgrep, Gitleaks, Trivy, OSV-Scanner and, for the languages in your project, FindSecBugs, Bandit and gosec. Nothing is installed without asking you.
 3. Open a project and type `@ai-privacy /review` in Chat.
 
 ## What it uses
@@ -39,6 +39,10 @@ All of these run on your machine. Setup installs the optional tools only if you 
 | [Semgrep](https://semgrep.dev) (optional) | Extra rules from the bundled Hushavyr rule pack | `/security`, `/scan`, CLI |
 | [Gitleaks](https://github.com/gitleaks/gitleaks) (optional) | Secret detection; also blocks credentials before `/pr` | `/gitleaks`, `/scan`, `/pr` |
 | [Trivy](https://trivy.dev) (optional) | CVEs in dependencies, plus checks whether your code calls the vulnerable function; SBOM export | `/dependencies`, `/scan` |
+| [OSV-Scanner](https://google.github.io/osv-scanner/) (optional) | More dependency CVEs from a downloaded OSV.dev database; runs with `--offline`. A CVE Trivy already reports is shown once | `/dependencies`, `/scan`, CLI |
+| [FindSecBugs](https://find-sec-bugs.github.io) on [SpotBugs](https://spotbugs.github.io) (optional) | Security bugs in compiled Java/Kotlin classes (`target/classes`, `build/classes/*/main`), mapped back to the source line | `/security`, `/scan`, CLI |
+| [Bandit](https://bandit.readthedocs.io) (optional) | Python security checks; only medium/high severity and confidence, no `assert` or test findings | `/security`, `/scan`, CLI |
+| [gosec](https://github.com/securego/gosec) (optional) | Go security checks for Go modules; no unchecked-error (G104) or test findings | `/security`, `/scan`, CLI |
 | [Docker](https://www.docker.com) (optional) | Offline sandbox with no network that proves a fix: the test fails before the fix and passes after. Supports Java/Maven, Python/pytest, JS/TS and Go | **Prove with a failing test**, verified fix → PR |
 | [GitHub CLI](https://cli.github.com) `gh` (optional) | Opens the pull request | `/pr`, `/improve` |
 | VS Code Chat + Copilot (opt-in only) | Gets only the pseudonymized selection, and only after you approve | `/escalate`, `/auto` |
@@ -69,11 +73,11 @@ Type `@ai-privacy` in VS Code Chat, then one of these commands:
 | `/improve` | Asks the local model for real improvements to the open file (bugs, safety, clarity), shows a diff and a summary, and after **Apply** offers to open a pull request |
 | `/pr` | Commits your changes to a new branch, pushes it and opens a pull request (`gh`, or a GitHub link). Asks first and stops if it finds credentials. |
 | `/review-changes` | Reviews your uncommitted changes |
-| `/scan` | Reviews the whole project: AI, Semgrep, Gitleaks, built-in rules, data flow and CVEs |
+| `/scan` | Reviews the whole project: AI, Semgrep, Gitleaks, the optional analyzers, built-in rules, data flow and CVEs |
 | `/scan-changed` | Same as `/scan`, but only for files that changed since the last scan |
 | `/security` | Fast project security scan without AI: rules, credentials, and request input that reaches SQL, shell, eval, files or URLs |
 | `/secrets` · `/gitleaks` | Finds hardcoded passwords and keys (values are hidden) |
-| `/dependencies` | Finds CVEs with Trivy and shows whether your code calls the vulnerable function |
+| `/dependencies` | Finds CVEs with Trivy and OSV-Scanner and shows whether your code calls the vulnerable function |
 | `/test` | Runs the project tests |
 | `/auto` | Sends a typed question that contains no code to the right model |
 | `/escalate` | *Opt-in.* Sends only the selected function to a Copilot model, with names removed and after you approve it (see below) |

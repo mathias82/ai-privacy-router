@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.0.32
+- **More optional offline analyzers:** FindSecBugs (SpotBugs, compiled Java/Kotlin classes), Bandit (Python), gosec (Go) and OSV-Scanner (dependency CVEs, offline database only) feed `/security`, `/scan`, `/dependencies`, the CLI and SARIF with `findsecbugs-`, `bandit-`, `gosec-` and `osv-` rule ids. Only medium/high findings outside tests are kept, each line is reported once, and OSV CVEs already found by Trivy are not repeated. Missing tools are skipped; Setup offers them for matching projects and asks before downloading the OSV database.
 - **Go verified fixes:** choose **Go / go test** to reproduce a bug with a generated failing Go test and verify the fix in offline Docker:
   - Uses `aiPrivacyRouter.fixGoImage`, default `golang:1.24`.
   - Uses the module cache in read-only mode, or the cache set in `aiPrivacyRouter.fixGoModCache`.
