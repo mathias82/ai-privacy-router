@@ -8,7 +8,7 @@ import {uiLanguage} from "./trivyCommands";
 import {reviewOverride} from "./overrideFlow";
 import {writeRetainedAuditEvent} from "./audit";
 import {validateContext} from "./context";
-import {runRegressionTests, testProfiles, TestProfile, formatTestReceipt} from "./regression";
+import {runRegressionTests, testProfiles, detectTestProfiles, formatTestReceipt} from "./regression";
 
 /** Writes every Hushavyr marker (review, security, dependencies) to hushavyr.sarif in the first workspace folder. */
 async function exportSarif(context: vscode.ExtensionContext): Promise<void> {
@@ -187,7 +187,7 @@ export async function runWorkspaceTests(externalToken?: vscode.CancellationToken
   }
   const folder = await vscode.window.showWorkspaceFolderPick({placeHolder: "Choose the project whose existing tests will run"});
   if (!folder || folder.uri.scheme !== "file") return;
-  const items = (Object.keys(testProfiles) as TestProfile[]).map(profile => ({label: testProfiles[profile].label, profile}));
+  const items = (await detectTestProfiles(folder.uri.fsPath)).map(profile => ({label: testProfiles[profile].label, profile}));
   const choice = await vscode.window.showQuickPick(items, {placeHolder: "Run existing tests locally (project scripts may execute code)"});
   if (!choice) return;
   return vscode.window.withProgress({location: vscode.ProgressLocation.Notification,

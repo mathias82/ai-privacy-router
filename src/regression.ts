@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { realpath } from "node:fs/promises";
+import { access, realpath } from "node:fs/promises";
+import { join } from "node:path";
 
 // User selects a fixed project runner. Model text is never a command or argument.
 export const testProfiles = {
@@ -11,6 +12,21 @@ export const testProfiles = {
   pytest: {label: "python -m pytest", executable: "python", args: ["-m", "pytest"]}
 } as const;
 export type TestProfile = keyof typeof testProfiles;
+
+const MARKERS: Record<TestProfile, string[]> = {
+  npm: ["package.json"], maven: ["pom.xml"], "maven-wrapper": ["mvnw"],
+  gradle: ["build.gradle", "build.gradle.kts"], "gradle-wrapper": ["gradlew"],
+  pytest: ["pytest.ini", "pyproject.toml", "setup.cfg", "setup.py", "tox.ini", "conftest.py"]
+};
+/** Runners whose build file exists in the project root; all runners when none is recognised. */
+export async function detectTestProfiles(dir: string): Promise<TestProfile[]> {
+  const all = Object.keys(testProfiles) as TestProfile[];
+  const found: TestProfile[] = [];
+  for (const profile of all)
+    for (const marker of MARKERS[profile])
+      if (await access(join(dir, marker)).then(() => true, () => false)) { found.push(profile); break; }
+  return found.length ? found : all;
+}
 export interface TestRunOptions { cwd: string; profile: TestProfile; trusted: boolean; timeoutMs?: number; signal?: AbortSignal }
 export interface TestReceipt { profile: string; status: "passed" | "failed" | "cancelled" | "timed-out" | "unavailable"; exitCode: number | null; durationMs: number }
 
