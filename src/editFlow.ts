@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import {inlineText} from "./review";
 import {randomUUID} from "node:crypto";
 import {configuredClient, configuredModel} from "./model";
 import {LocalOllama} from "./ollama";
@@ -48,7 +49,7 @@ async function apply(id: string): Promise<void> {
   if (await vscode.workspace.applyEdit(edit)) {
     pending.delete(id);
     const title = item.title ?? item.instruction.split("\n")[0].slice(0, 72);
-    const body = item.summary.length ? "Changes in `" + item.path + "` (" + item.model + "):\n" + item.summary.map(s => "- " + s).join("\n") : "";
+    const body = item.summary.length ? "Changes in `" + item.path + "` (" + item.model + "):\n" + item.summary.map(s => "- " + inlineText(s)).join("\n") : "";
     const choice = await vscode.window.showInformationMessage("Hushavyr: change applied (not saved yet). Review or test it, then open a pull request.", "Open pull request");
     if (choice === "Open pull request") await vscode.commands.executeCommand("aiPrivacyRouter.openPullRequest", title, body);
   }
@@ -140,7 +141,7 @@ export async function runEdit(target: EditTarget, stream: vscode.ChatResponseStr
       : "**" + model + "** did not produce a usable change for `" + target.path + "`. Try another model:\n\n");
   } else {
     stream.markdown("**Proposed change** to `" + target.path + "` (" + model + ", local). Nothing is changed until you apply it.\n\n" +
-      (summary.length ? summary.map(s => "- " + s).join("\n") + "\n\n" : "") + "```diff\n" +
+      (summary.length ? summary.map(s => "- " + inlineText(s)).join("\n") + "\n\n" : "") + "```diff\n" +
       shortDiff(target.original, updated).replace(/```/g, "ˋˋˋ") + "\n```\n");
     stream.button({command: "aiPrivacyRouter.applyEdit", title: "Apply change", arguments: [id]});
     void showDiff(pending.get(id) as Pending, "Hushavyr: " + target.instruction.slice(0, 60));

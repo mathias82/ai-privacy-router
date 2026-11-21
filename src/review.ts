@@ -114,7 +114,12 @@ export function reviewSummary(result: ReviewResult): string {
     .filter(([s]) => count(s)).map(([s, icon]) => icon + " " + count(s) + " " + s);
   const first = [...result.findings].sort((a, b) => (SEVERITY_RANK[a.severity] ?? 3) - (SEVERITY_RANK[b.severity] ?? 3))[0];
   return "**Summary:** " + result.findings.length + " issue(s) to look at: " + parts.join(" · ") +
-    "  \n**Fix first:** " + first.title.replace(/^Local rule: /, "") + " (`" + shortPath(first.path) + ":" + (first.line ?? "?") + "`)";
+    "  \n**Fix first:** " + inlineText(first.title.replace(/^Local rule: /, "")) + " (`" + shortPath(first.path) + ":" + (first.line ?? "?") + "`)";
+}
+
+/** Model text shown as Markdown: keep `<`/`>` visible instead of letting the renderer drop them as HTML. */
+export function inlineText(text: string): string {
+  return text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 export function formatReview(result: ReviewResult, displayPath: (path: string) => string = p => p): string {
@@ -127,13 +132,13 @@ export function formatReview(result: ReviewResult, displayPath: (path: string) =
   if (result.findings.some(f => f.title.startsWith("Local rule:"))) lines.push("**Offline indicators:** \"Local rule\" findings come from bundled static rules, not from the AI model; the second local pass checks them against the source when it runs.", "");
   if (!result.findings.length) lines.push(result.proposed === 0 ? "The local model proposed no findings. This does not establish that the code is bug-free." : "No findings passed the evidence checks. The review was inconclusive; this does not establish that the code is bug-free.", "");
   for (const [i,f] of result.findings.entries()) lines.push(
-    "#### " + (i+1) + ". " + f.title,
+    "#### " + (i+1) + ". " + inlineText(f.title),
     "**Status:** Potential · **Severity:** " + f.severity,
     "**Location:** \x60" + (f.path ? displayPath(f.path) : "selection").replace(/\x60/g, "") + ":" + (f.line ?? "?") + "\x60",
     "**Second local pass:** " + (f.verification === "supported" ? "Source support agreed; no runtime proof." : "Not verified."),
     "**Source evidence:**", "\x60\x60\x60java\n" + f.evidence + "\n\x60\x60\x60",
-    "**Proposed fix:** " + f.fix,
-    "**Regression test to implement:** " + f.regressionTest, ""
+    "**Proposed fix:** " + inlineText(f.fix),
+    "**Regression test to implement:** " + inlineText(f.regressionTest), ""
   );
   lines.push("_Filtered " + result.rejected + " unsupported or malformed finding(s). Source matching is not proof of runtime exploitability._");
   if (result.rejectionReasons?.length) lines.push("", "**Validation feedback:**", ...result.rejectionReasons.map(reason => "- " + reason));
