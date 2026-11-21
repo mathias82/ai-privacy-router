@@ -437,3 +437,19 @@ test("provider token formats are found whatever the variable is called", async (
   assert.equal(scanSecrets("// aws " + "AKIA" + "IOSFODNN7EXAMPLE", "a.js").length, 0);
   assert.equal(scanSecrets("const k = '" + "sk_" + "live_" + "x".repeat(24) + "';", "a.js").length, 0);
 });
+
+test("the pull request plan lists untracked files that the commit will add", async () => {
+  const { planPullRequest } = await import("../pullRequest");
+  const out: Record<string, string> = {
+    "status": " M src/a.js\n?? lock.json\n", "rev-parse --abbrev-ref": "main\n", "remote": "https://github.com/o/r.git\n",
+    "diff": " src/a.js | 2 +-\n 1 file changed\n", "ls-files": "lock.json\n"
+  };
+  const exec = async (_cmd: string, args: string[]) => {
+    if (args[0] === "symbolic-ref") throw new Error("none");
+    const key = Object.keys(out).find(k => args.join(" ").startsWith(k));
+    return key ? out[key] : "";
+  };
+  const plan = await planPullRequest("/r", exec);
+  assert.ok(typeof plan !== "string");
+  assert.equal(plan.stat, " src/a.js | 2 +-\n 1 file changed\n lock.json | new file");
+});

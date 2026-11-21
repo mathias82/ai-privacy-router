@@ -34,7 +34,11 @@ export async function planPullRequest(root: string, exec: Exec = defaultExec): P
   let base = current;
   try { base = (await exec("git", ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], root)).trim().replace(/^origin\//, ""); } catch { /* keep current */ }
   let stat = "";
-  try { stat = (await exec("git", ["diff", "--stat", "HEAD"], root)).trim(); } catch { /* new repository */ }
+  try { stat = (await exec("git", ["diff", "--stat", "HEAD"], root)).replace(/^\n+|\s+$/g, ""); } catch { /* new repository */ }
+  // `git diff --stat` leaves out untracked files, which the commit will still add.
+  let untracked: string[] = [];
+  try { untracked = (await exec("git", ["ls-files", "--others", "--exclude-standard"], root)).split("\n").filter(Boolean); } catch { /* keep the diff stat */ }
+  if (untracked.length) stat = (stat ? stat + "\n" : "") + untracked.map(f => " " + f + " | new file").join("\n");
   return {root, current, base, files, stat, remote};
 }
 
