@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.1
+- **Live answers:** `/explain` and plain questions stream as they are written; `/review` shows each pass and adds findings one by one.
+- **`/review`:** flows proven by taint tracking and SQL sinks built with `SELECT *` are kept; locations are relative to the workspace; `<` and `>` in model text stay visible.
+- **`/edit`:** change summaries keep comparison operators.
+- **`/test`:** offers only the test runners the project uses (npm, Maven, Gradle, pytest).
+- **`/auto`:** plain questions are no longer blocked by VS Code's attached skill index.
+- **`/secrets` and `/scan`:** Stripe, AWS, GitHub, Slack and Google tokens and private keys are found whatever the variable is called.
+- **`/dependencies`:** manifests in direct subfolders (`api/`, `backend/`) are scanned; a `package.json` without a lockfile gets a clear hint.
+- **`/scan-changed`:** says when nothing changed since the last scan instead of reporting inconclusive coverage.
+- **`/pr`:** the change summary lists new, untracked files.
+- **Setup:** detects the OSV-Scanner v2 offline database.
+- **README:** demo GIF of install, setup and every chat command; working Marketplace badges.
+
 ## 1.0.0
 First stable release. The public surface (chat commands, command ids, settings, CLI flags and exit codes, SARIF output) is now covered by the [stability policy](docs/stability.md).
 - **OWASP Benchmark for Java: 97.2% with 0% false positives.** Every category scores 100% except weak hashing (69%), where the algorithm is read from a properties file outside the scanned code.
